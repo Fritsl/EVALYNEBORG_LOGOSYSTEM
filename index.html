@@ -201,7 +201,8 @@
   }
 
   // Load and inline the SVG so we can recolor its paths.
-  fetch("logo.svg")
+  // Filename case matters on Linux hosts (e.g. GitHub Pages): file is LOGO.svg.
+  fetch("LOGO.svg")
     .then(r => r.text())
     .then(text => {
       els.frame.innerHTML = text;
