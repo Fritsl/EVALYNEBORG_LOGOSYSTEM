@@ -1,0 +1,11 @@
+# Blender backup files
+*.blend1
+*.blend2
+
+# OS / editor cruft
+.DS_Store
+Thumbs.db
+*.swp
+
+# Local, machine-specific Claude settings
+.claude/settings.local.json

@@ -1,0 +1,309 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Eva Lyneborg — Logo Studio</title>
+<style>
+  :root {
+    --panel-bg: #1a1a1a;
+    --panel-fg: #e8e8e8;
+    --panel-muted: #888;
+    --panel-border: #333;
+    --accent: #6c9ce8;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    font-family: -apple-system, "Segoe UI", system-ui, sans-serif;
+    background: #0e0e0e;
+    color: var(--panel-fg);
+    display: grid;
+    grid-template-columns: 320px 1fr;
+    min-height: 100vh;
+  }
+
+  /* ---- Control panel ---- */
+  .panel {
+    background: var(--panel-bg);
+    border-right: 1px solid var(--panel-border);
+    padding: 24px 22px;
+    overflow-y: auto;
+  }
+  .panel h1 {
+    font-size: 16px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    margin: 0 0 4px;
+  }
+  .panel .sub {
+    color: var(--panel-muted);
+    font-size: 12px;
+    margin: 0 0 28px;
+  }
+  .control { margin-bottom: 26px; }
+  .control label {
+    display: block;
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--panel-muted);
+    margin-bottom: 8px;
+  }
+  .color-row { display: flex; align-items: center; gap: 10px; }
+  .color-row input[type="color"] {
+    width: 44px; height: 44px;
+    border: 1px solid var(--panel-border);
+    border-radius: 8px;
+    background: none;
+    padding: 0;
+    cursor: pointer;
+  }
+  .color-row .hex {
+    font-family: ui-monospace, "Cascadia Code", monospace;
+    font-size: 13px;
+    color: var(--panel-fg);
+    background: #111;
+    border: 1px solid var(--panel-border);
+    border-radius: 6px;
+    padding: 8px 10px;
+    flex: 1;
+  }
+  input[type="range"] { width: 100%; accent-color: var(--accent); }
+  .slider-head {
+    display: flex; justify-content: space-between; align-items: baseline;
+  }
+  .slider-head .val {
+    font-family: ui-monospace, monospace;
+    font-size: 13px;
+    color: var(--panel-fg);
+  }
+  .actions { display: flex; gap: 10px; margin-top: 8px; }
+  .actions button {
+    flex: 1;
+    background: #262626;
+    color: var(--panel-fg);
+    border: 1px solid var(--panel-border);
+    border-radius: 8px;
+    padding: 10px;
+    font-size: 13px;
+    cursor: pointer;
+  }
+  .actions button:hover { background: #303030; border-color: #444; }
+
+  /* ---- Preview stage ---- */
+  .stage {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 40px;
+  }
+  .frame {
+    width: min(70vmin, 620px);
+    aspect-ratio: 300 / 280;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+    border-radius: 4px;
+    box-shadow: 0 10px 40px rgba(0,0,0,0.5);
+  }
+  .frame svg {
+    width: 100%;
+    height: 100%;
+    display: block;
+    transition: transform 0.05s linear;
+  }
+  .loading { color: var(--panel-muted); font-size: 14px; }
+</style>
+</head>
+<body>
+  <aside class="panel">
+    <h1>Logo Studio</h1>
+    <p class="sub">Eva Lyneborg — base logo</p>
+
+    <div class="control">
+      <label for="fillColor">Fill (artwork)</label>
+      <div class="color-row">
+        <input type="color" id="fillColor" value="#eaead2" />
+        <input type="text" class="hex" id="fillHex" value="#eaead2" spellcheck="false" />
+      </div>
+    </div>
+
+    <div class="control">
+      <label for="bgColor">Background</label>
+      <div class="color-row">
+        <input type="color" id="bgColor" value="#000000" />
+        <input type="text" class="hex" id="bgHex" value="#000000" spellcheck="false" />
+      </div>
+    </div>
+
+    <div class="control">
+      <div class="slider-head">
+        <label for="heightRegulator" style="margin:0">Height regulator</label>
+        <span class="val" id="heightRegulatorVal">0</span>
+      </div>
+      <input type="range" id="heightRegulator" min="-125" max="109" value="0" />
+    </div>
+
+    <div class="control">
+      <div class="actions">
+        <button id="swap">Swap colors</button>
+        <button id="reset">Reset</button>
+      </div>
+    </div>
+  </aside>
+
+  <main class="stage">
+    <div class="frame" id="frame">
+      <span class="loading">Loading logo…</span>
+    </div>
+  </main>
+
+<script>
+  const DEFAULTS = { fill: "#eaead2", bg: "#000000", heightRegulator: 0 };
+  const state = { ...DEFAULTS };
+
+  // Any Y coordinate on the FRAME path below this belongs to the top bar
+  // (outer top edge ≈ 11, inner top edge ≈ 26; next-lowest point is ≈ 43).
+  const TOP_THRESHOLD = 35;
+
+  const els = {
+    frame:    document.getElementById("frame"),
+    fillColor:document.getElementById("fillColor"),
+    fillHex:  document.getElementById("fillHex"),
+    bgColor:  document.getElementById("bgColor"),
+    bgHex:    document.getElementById("bgHex"),
+    heightRegulator:    document.getElementById("heightRegulator"),
+    heightRegulatorVal: document.getElementById("heightRegulatorVal"),
+    swap:     document.getElementById("swap"),
+    reset:    document.getElementById("reset"),
+  };
+
+  let svgEl = null;      // the live inlined <svg>
+  let framePath = null;  // first <path> = the rectangular frame
+  let frameOrigD = "";   // its untouched path data
+  let baseViewBox = null;// the SVG's original viewBox {x, y, w, h}
+
+  // Shift the Y of every coordinate on the top bar by `dy`.
+  // The frame path is built only from M / C / z commands, so every number
+  // is part of an (x, y) pair — odd-indexed numbers are the Y values.
+  function shiftFrameTop(d, dy) {
+    let i = 0;
+    return d.replace(/-?\d*\.?\d+/g, (m) => {
+      const isY = (i++ % 2) === 1;
+      if (isY) {
+        const v = parseFloat(m);
+        if (v < TOP_THRESHOLD) return (v + dy).toString();
+      }
+      return m;
+    });
+  }
+
+  // Load and inline the SVG so we can recolor its paths.
+  fetch("logo.svg")
+    .then(r => r.text())
+    .then(text => {
+      els.frame.innerHTML = text;
+      svgEl = els.frame.querySelector("svg");
+      // Let CSS control sizing.
+      svgEl.removeAttribute("width");
+      svgEl.removeAttribute("height");
+      framePath = svgEl.querySelector("path");
+      frameOrigD = framePath ? framePath.getAttribute("d") : "";
+      const vb = svgEl.getAttribute("viewBox").split(/[\s,]+/).map(Number);
+      baseViewBox = { x: vb[0], y: vb[1], w: vb[2], h: vb[3] };
+      render();
+    })
+    .catch(err => {
+      els.frame.innerHTML =
+        '<span class="loading">Could not load logo.svg — serve this page over http (see notes).</span>';
+      console.error(err);
+    });
+
+  function render() {
+    if (!svgEl) return;
+    // Recolor every drawn path (and the parent group's fill).
+    svgEl.querySelectorAll("g, path").forEach(node => {
+      if (node.getAttribute("fill") !== null || node.tagName === "path") {
+        node.setAttribute("fill", state.fill);
+      }
+    });
+    els.frame.style.background = state.bg;
+
+    // Reposition the top bar of the frame.
+    if (framePath) {
+      framePath.setAttribute("d", shiftFrameTop(frameOrigD, state.heightRegulator));
+    }
+
+    // Grow the viewBox upward only when the bar rises above the original top
+    // edge, so it never gets clipped. Default framing stays pixel-identical.
+    if (baseViewBox) {
+      const PAD = 15;                    // breathing room above a lifted bar
+      const barTop = 11 + state.heightRegulator; // outer top edge of the frame
+      let minY = baseViewBox.y;
+      if (barTop < baseViewBox.y) minY = barTop - PAD;
+      const extra = baseViewBox.y - minY; // >= 0
+      svgEl.setAttribute("viewBox",
+        `${baseViewBox.x} ${minY} ${baseViewBox.w} ${baseViewBox.h + extra}`);
+    }
+
+    els.heightRegulatorVal.textContent =
+      (state.heightRegulator > 0 ? "+" : "") + state.heightRegulator;
+  }
+
+  function normalizeHex(v) {
+    v = v.trim();
+    if (!v.startsWith("#")) v = "#" + v;
+    return /^#[0-9a-fA-F]{6}$/.test(v) ? v.toLowerCase() : null;
+  }
+
+  // Fill color
+  els.fillColor.addEventListener("input", e => {
+    state.fill = e.target.value;
+    els.fillHex.value = state.fill;
+    render();
+  });
+  els.fillHex.addEventListener("change", e => {
+    const hex = normalizeHex(e.target.value);
+    if (hex) { state.fill = hex; els.fillColor.value = hex; els.fillHex.value = hex; render(); }
+    else { els.fillHex.value = state.fill; }
+  });
+
+  // Background color
+  els.bgColor.addEventListener("input", e => {
+    state.bg = e.target.value;
+    els.bgHex.value = state.bg;
+    render();
+  });
+  els.bgHex.addEventListener("change", e => {
+    const hex = normalizeHex(e.target.value);
+    if (hex) { state.bg = hex; els.bgColor.value = hex; els.bgHex.value = hex; render(); }
+    else { els.bgHex.value = state.bg; }
+  });
+
+  // Height regulator — moves the top bar of the frame
+  els.heightRegulator.addEventListener("input", e => {
+    state.heightRegulator = Number(e.target.value);
+    render();
+  });
+
+  // Swap fill <-> background
+  els.swap.addEventListener("click", () => {
+    [state.fill, state.bg] = [state.bg, state.fill];
+    els.fillColor.value = state.fill; els.fillHex.value = state.fill;
+    els.bgColor.value = state.bg;     els.bgHex.value = state.bg;
+    render();
+  });
+
+  // Reset to defaults
+  els.reset.addEventListener("click", () => {
+    Object.assign(state, DEFAULTS);
+    els.fillColor.value = state.fill; els.fillHex.value = state.fill;
+    els.bgColor.value = state.bg;     els.bgHex.value = state.bg;
+    els.heightRegulator.value = state.heightRegulator;
+    render();
+  });
+</script>
+</body>
+</html>
