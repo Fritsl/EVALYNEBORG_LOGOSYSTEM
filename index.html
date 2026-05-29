@@ -4,6 +4,9 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>Eva Lyneborg — Logo Studio</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&display=swap" rel="stylesheet" />
 <style>
   :root {
     --panel-bg: #1a1a1a;
@@ -19,7 +22,7 @@
     background: #0e0e0e;
     color: var(--panel-fg);
     display: grid;
-    grid-template-columns: 320px 1fr;
+    grid-template-columns: 340px 1fr;
     min-height: 100vh;
   }
 
@@ -42,7 +45,15 @@
     margin: 0 0 28px;
   }
   .control { margin-bottom: 26px; }
-  .control label {
+  .section-label {
+    display: block;
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--panel-muted);
+    margin-bottom: 8px;
+  }
+  .control > label { /* same as section-label */
     display: block;
     font-size: 12px;
     text-transform: uppercase;
@@ -79,7 +90,7 @@
     color: var(--panel-fg);
   }
   .actions { display: flex; gap: 10px; margin-top: 8px; }
-  .actions button {
+  .actions button, .add-line {
     flex: 1;
     background: #262626;
     color: var(--panel-fg);
@@ -89,41 +100,72 @@
     font-size: 13px;
     cursor: pointer;
   }
-  .actions button:hover { background: #303030; border-color: #444; }
+  .actions button:hover, .add-line:hover { background: #303030; border-color: #444; }
+  .add-line { width: 100%; margin-top: 4px; }
+
+  /* ---- Text lines ---- */
+  .text-row {
+    border: 1px solid var(--panel-border);
+    border-radius: 8px;
+    padding: 10px;
+    margin-bottom: 10px;
+    background: #161616;
+  }
+  .text-row .tl-text {
+    width: 100%;
+    background: #111;
+    border: 1px solid var(--panel-border);
+    border-radius: 6px;
+    color: var(--panel-fg);
+    font-size: 13px;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    padding: 8px 10px;
+    margin-bottom: 8px;
+  }
+  .text-row .size-line {
+    display: flex; align-items: center; gap: 8px;
+  }
+  .text-row .size-line .cap {
+    font-size: 11px; color: var(--panel-muted);
+    text-transform: uppercase; letter-spacing: 0.05em;
+    white-space: nowrap;
+  }
+  .text-row .size-line .tl-size { flex: 1; }
+  .text-row .size-line .tl-size-val {
+    font-family: ui-monospace, monospace; font-size: 12px;
+    color: var(--panel-fg); width: 30px; text-align: right;
+  }
+  .text-row .tl-del {
+    background: none; border: none; color: var(--panel-muted);
+    cursor: pointer; font-size: 18px; line-height: 1; padding: 0 2px;
+  }
+  .text-row .tl-del:hover { color: #e06c6c; }
 
   /* ---- Preview stage ---- */
   .stage {
     display: flex;
-    align-items: center;
+    align-items: flex-start;
     justify-content: center;
     padding: 40px;
   }
   .frame {
-    width: min(70vmin, 620px);
-    aspect-ratio: 300 / 280;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    overflow: hidden;
+    width: min(70vmin, 560px);
     border-radius: 4px;
     box-shadow: 0 10px 40px rgba(0,0,0,0.5);
+    overflow: hidden;
   }
-  .frame svg {
-    width: 100%;
-    height: 100%;
-    display: block;
-    transition: transform 0.05s linear;
-  }
-  .loading { color: var(--panel-muted); font-size: 14px; }
+  .frame svg { width: 100%; height: auto; display: block; }
+  .loading { color: var(--panel-muted); font-size: 14px; padding: 40px; display:block; }
 </style>
 </head>
 <body>
   <aside class="panel">
     <h1>Logo Studio</h1>
-    <p class="sub">Eva Lyneborg — base logo</p>
+    <p class="sub">Eva Lyneborg</p>
 
     <div class="control">
-      <label for="fillColor">Fill (artwork)</label>
+      <label for="fillColor">Fill (artwork &amp; text)</label>
       <div class="color-row">
         <input type="color" id="fillColor" value="#eaead2" />
         <input type="text" class="hex" id="fillHex" value="#eaead2" spellcheck="false" />
@@ -147,6 +189,12 @@
     </div>
 
     <div class="control">
+      <span class="section-label">Text lines (fill logo width)</span>
+      <div id="textLines"></div>
+      <button class="add-line" id="addLine">+ Add line</button>
+    </div>
+
+    <div class="control">
       <div class="actions">
         <button id="swap">Swap colors</button>
         <button id="reset">Reset</button>
@@ -161,12 +209,22 @@
   </main>
 
 <script>
-  const DEFAULTS = { fill: "#eaead2", bg: "#000000", heightRegulator: 0 };
-  const state = { ...DEFAULTS };
+  const SVGNS = "http://www.w3.org/2000/svg";
 
-  // Any Y coordinate on the FRAME path below this belongs to the top bar
-  // (outer top edge ≈ 11, inner top edge ≈ 26; next-lowest point is ≈ 43).
-  const TOP_THRESHOLD = 35;
+  // Visual defaults (text lines are user content, not reset).
+  const VISUAL_DEFAULTS = { fill: "#eaead2", bg: "#000000", heightRegulator: 0 };
+
+  const state = {
+    ...VISUAL_DEFAULTS,
+    textLines: [ { text: "EVA LYNEBORG", size: 70 } ],
+  };
+
+  // --- Geometry / layout constants (in the logo's SVG coordinate units) ---
+  const TOP_THRESHOLD = 35;   // frame-top Y values below this belong to the top bar
+  const CAP_RATIO     = 0.72; // all-caps visual height as a fraction of font-size (Roboto)
+  const TEXT_TOP_GAP  = 48;   // gap from frame bottom to the first text line
+  const TEXT_LINE_GAP = 30;   // equal gap between consecutive text lines
+  const BOTTOM_PAD    = 36;   // padding below the last line
 
   const els = {
     frame:    document.getElementById("frame"),
@@ -176,18 +234,23 @@
     bgHex:    document.getElementById("bgHex"),
     heightRegulator:    document.getElementById("heightRegulator"),
     heightRegulatorVal: document.getElementById("heightRegulatorVal"),
+    textLines: document.getElementById("textLines"),
+    addLine:  document.getElementById("addLine"),
     swap:     document.getElementById("swap"),
     reset:    document.getElementById("reset"),
   };
 
-  let svgEl = null;      // the live inlined <svg>
-  let framePath = null;  // first <path> = the rectangular frame
-  let frameOrigD = "";   // its untouched path data
-  let baseViewBox = null;// the SVG's original viewBox {x, y, w, h}
+  let svgEl = null;        // the live inlined <svg>
+  let framePath = null;    // first <path> = the rectangular frame
+  let frameOrigD = "";     // its untouched path data
+  let baseViewBox = null;  // the SVG's original viewBox {x, y, w, h}
+  let bgRect = null;       // background <rect> covering the viewBox
+  let textGroup = null;    // <g> holding the text lines
+  let frameMetrics = null; // {left, width, bottom} of the frame, in SVG units
 
   // Shift the Y of every coordinate on the top bar by `dy`.
-  // The frame path is built only from M / C / z commands, so every number
-  // is part of an (x, y) pair — odd-indexed numbers are the Y values.
+  // The frame path is built only from M / C / z commands, so every number is
+  // part of an (x, y) pair — odd-indexed numbers are the Y values.
   function shiftFrameTop(d, dy) {
     let i = 0;
     return d.replace(/-?\d*\.?\d+/g, (m) => {
@@ -200,57 +263,204 @@
     });
   }
 
-  // Load and inline the SVG so we can recolor its paths.
+  // Load and inline the SVG so we can recolor its paths and add text.
   // Filename case matters on Linux hosts (e.g. GitHub Pages): file is LOGO.svg.
   fetch("LOGO.svg")
     .then(r => r.text())
     .then(text => {
       els.frame.innerHTML = text;
       svgEl = els.frame.querySelector("svg");
-      // Let CSS control sizing.
       svgEl.removeAttribute("width");
       svgEl.removeAttribute("height");
-      framePath = svgEl.querySelector("path");
+
+      framePath  = svgEl.querySelector("path");
       frameOrigD = framePath ? framePath.getAttribute("d") : "";
+
       const vb = svgEl.getAttribute("viewBox").split(/[\s,]+/).map(Number);
       baseViewBox = { x: vb[0], y: vb[1], w: vb[2], h: vb[3] };
+
+      // Stable frame metrics (left/width/bottom never change; only the top moves).
+      const fb = framePath.getBBox();
+      frameMetrics = { left: fb.x, width: fb.width, bottom: fb.y + fb.height };
+
+      // Background rect — first child, so it sits behind everything. Makes the
+      // SVG self-contained (important for future SVG export).
+      bgRect = document.createElementNS(SVGNS, "rect");
+      svgEl.insertBefore(bgRect, svgEl.firstChild);
+
+      // Text group — last child, drawn in front.
+      textGroup = document.createElementNS(SVGNS, "g");
+      svgEl.appendChild(textGroup);
+
+      rebuildTextRows();
       render();
+
+      // Re-render once the web font is ready so textLength reflects real metrics.
+      if (document.fonts && document.fonts.ready) {
+        document.fonts.ready.then(render);
+      }
     })
     .catch(err => {
       els.frame.innerHTML =
-        '<span class="loading">Could not load logo.svg — serve this page over http (see notes).</span>';
+        '<span class="loading">Could not load LOGO.svg — serve this page over http.</span>';
       console.error(err);
     });
 
+  // Build the text lines into the SVG. Each line's visible ink is made to span
+  // the frame width *exactly*, and the gaps between lines' ink are kept equal
+  // by measuring real glyph metrics rather than estimating from font-size.
+  // Returns the Y of the last line's ink bottom (or frame bottom if no lines).
+  function layoutText() {
+    while (textGroup.firstChild) textGroup.removeChild(textGroup.firstChild);
+
+    let prevInkBottom = frameMetrics.bottom;
+    const frameRight = frameMetrics.left + frameMetrics.width;
+
+    state.textLines.forEach((line, i) => {
+      const size = line.size;
+      const content = (line.text || "").toUpperCase();
+      const gap = (i === 0) ? TEXT_TOP_GAP : TEXT_LINE_GAP;
+      const targetInkTop = prevInkBottom + gap;
+
+      if (!content.length) {
+        // No ink to measure — reserve an estimated band so spacing stays sane
+        // while the user is mid-typing on a freshly added line.
+        prevInkBottom = targetInkTop + size * CAP_RATIO;
+        return;
+      }
+
+      const t = document.createElementNS(SVGNS, "text");
+      t.setAttribute("x", frameMetrics.left);
+      t.setAttribute("y", targetInkTop);            // tentative; corrected below
+      t.setAttribute("textLength", frameMetrics.width);
+      t.setAttribute("lengthAdjust", "spacing");    // spread spacing, keep letterforms
+      t.setAttribute("font-family", "Roboto, Arial, sans-serif");
+      t.setAttribute("font-weight", "500");
+      t.setAttribute("font-size", size);
+      t.setAttribute("dominant-baseline", "hanging");
+      t.setAttribute("fill", state.fill);
+      t.textContent = content;
+      textGroup.appendChild(t);
+
+      // (1) Vertical: make the ink TOP land exactly on targetInkTop, so the gap
+      // above this line is exactly `gap`. The hanging baseline sits a little
+      // above the ink; shifting y moves the ink by the same amount (linear),
+      // so a single measured correction is exact.
+      let b = t.getBBox();
+      const yShift = targetInkTop - b.y;
+      const correctedY = targetInkTop + yShift;
+      t.setAttribute("y", correctedY);
+
+      // (2) Horizontal: make the ink span the frame width exactly. textLength
+      // controls glyph advance, so side bearings inset the visible ink; measure
+      // and compensate. Bearings are intrinsic to the glyphs → one pass is exact.
+      b = t.getBBox();
+      const leftBearing  = b.x - frameMetrics.left;
+      const rightBearing = frameRight - (b.x + b.width);
+      t.setAttribute("x", frameMetrics.left - leftBearing);
+      t.setAttribute("textLength", frameMetrics.width + leftBearing + rightBearing);
+
+      prevInkBottom = targetInkTop + b.height;       // exact ink bottom
+    });
+
+    return prevInkBottom;
+  }
+
   function render() {
     if (!svgEl) return;
-    // Recolor every drawn path (and the parent group's fill).
+
+    // Recolor the artwork (frame + face).
     svgEl.querySelectorAll("g, path").forEach(node => {
       if (node.getAttribute("fill") !== null || node.tagName === "path") {
         node.setAttribute("fill", state.fill);
       }
     });
-    els.frame.style.background = state.bg;
 
     // Reposition the top bar of the frame.
     if (framePath) {
       framePath.setAttribute("d", shiftFrameTop(frameOrigD, state.heightRegulator));
     }
 
-    // Grow the viewBox upward only when the bar rises above the original top
-    // edge, so it never gets clipped. Default framing stays pixel-identical.
-    if (baseViewBox) {
-      const PAD = 15;                    // breathing room above a lifted bar
-      const barTop = 11 + state.heightRegulator; // outer top edge of the frame
-      let minY = baseViewBox.y;
-      if (barTop < baseViewBox.y) minY = barTop - PAD;
-      const extra = baseViewBox.y - minY; // >= 0
-      svgEl.setAttribute("viewBox",
-        `${baseViewBox.x} ${minY} ${baseViewBox.w} ${baseViewBox.h + extra}`);
-    }
+    // Lay out the text below the logo.
+    const textBottom = layoutText();
 
+    // Compute the viewBox: extend up when the bar rises above its origin, and
+    // down to fit the text. Default framing stays pixel-identical.
+    const barTop = 11 + state.heightRegulator;          // outer top edge of frame
+    const minY = Math.min(baseViewBox.y, barTop - 15);
+    const baseBottom = baseViewBox.y + baseViewBox.h;
+    const maxY = Math.max(baseBottom, textBottom + BOTTOM_PAD);
+    svgEl.setAttribute("viewBox",
+      `${baseViewBox.x} ${minY} ${baseViewBox.w} ${maxY - minY}`);
+
+    // Background rect fills the whole (possibly grown) viewBox.
+    bgRect.setAttribute("x", baseViewBox.x);
+    bgRect.setAttribute("y", minY);
+    bgRect.setAttribute("width", baseViewBox.w);
+    bgRect.setAttribute("height", maxY - minY);
+    bgRect.setAttribute("fill", state.bg);
+
+    els.frame.style.background = state.bg;
     els.heightRegulatorVal.textContent =
       (state.heightRegulator > 0 ? "+" : "") + state.heightRegulator;
+  }
+
+  // ---- Text-line UI (rebuilt only on add/delete so typing keeps focus) ----
+  function rebuildTextRows() {
+    els.textLines.innerHTML = "";
+    state.textLines.forEach((line, idx) => {
+      const row = document.createElement("div");
+      row.className = "text-row";
+
+      const textInput = document.createElement("input");
+      textInput.type = "text";
+      textInput.className = "tl-text";
+      textInput.value = line.text;
+      textInput.placeholder = "LINE TEXT";
+      textInput.spellcheck = false;
+      textInput.addEventListener("input", e => {
+        state.textLines[idx].text = e.target.value;
+        render();
+      });
+
+      const sizeLine = document.createElement("div");
+      sizeLine.className = "size-line";
+
+      const cap = document.createElement("span");
+      cap.className = "cap";
+      cap.textContent = "Size";
+
+      const sizeInput = document.createElement("input");
+      sizeInput.type = "range";
+      sizeInput.className = "tl-size";
+      sizeInput.min = "20"; sizeInput.max = "200"; sizeInput.step = "1";
+      sizeInput.value = line.size;
+
+      const sizeVal = document.createElement("span");
+      sizeVal.className = "tl-size-val";
+      sizeVal.textContent = line.size;
+
+      sizeInput.addEventListener("input", e => {
+        const v = Number(e.target.value);
+        state.textLines[idx].size = v;
+        sizeVal.textContent = v;
+        render();
+      });
+
+      const del = document.createElement("button");
+      del.className = "tl-del";
+      del.title = "Delete line";
+      del.textContent = "×";
+      del.addEventListener("click", () => {
+        state.textLines.splice(idx, 1);
+        rebuildTextRows();
+        render();
+      });
+
+      sizeLine.append(cap, sizeInput, sizeVal, del);
+      row.append(textInput, sizeLine);
+      els.textLines.appendChild(row);
+    });
   }
 
   function normalizeHex(v) {
@@ -261,9 +471,7 @@
 
   // Fill color
   els.fillColor.addEventListener("input", e => {
-    state.fill = e.target.value;
-    els.fillHex.value = state.fill;
-    render();
+    state.fill = e.target.value; els.fillHex.value = state.fill; render();
   });
   els.fillHex.addEventListener("change", e => {
     const hex = normalizeHex(e.target.value);
@@ -273,9 +481,7 @@
 
   // Background color
   els.bgColor.addEventListener("input", e => {
-    state.bg = e.target.value;
-    els.bgHex.value = state.bg;
-    render();
+    state.bg = e.target.value; els.bgHex.value = state.bg; render();
   });
   els.bgHex.addEventListener("change", e => {
     const hex = normalizeHex(e.target.value);
@@ -283,9 +489,15 @@
     else { els.bgHex.value = state.bg; }
   });
 
-  // Height regulator — moves the top bar of the frame
+  // Height regulator
   els.heightRegulator.addEventListener("input", e => {
-    state.heightRegulator = Number(e.target.value);
+    state.heightRegulator = Number(e.target.value); render();
+  });
+
+  // Add a text line
+  els.addLine.addEventListener("click", () => {
+    state.textLines.push({ text: "", size: 60 });
+    rebuildTextRows();
     render();
   });
 
@@ -297,9 +509,9 @@
     render();
   });
 
-  // Reset to defaults
+  // Reset visual settings (keeps text content)
   els.reset.addEventListener("click", () => {
-    Object.assign(state, DEFAULTS);
+    Object.assign(state, VISUAL_DEFAULTS);
     els.fillColor.value = state.fill; els.fillHex.value = state.fill;
     els.bgColor.value = state.bg;     els.bgHex.value = state.bg;
     els.heightRegulator.value = state.heightRegulator;
