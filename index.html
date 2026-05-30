@@ -247,54 +247,70 @@
       </div>
     </div>
 
-    <div class="control">
-      <label for="fillColor">Fill (artwork &amp; text)</label>
-      <div class="color-row">
-        <input type="color" id="fillColor" value="#eaead2" />
-        <input type="text" class="hex" id="fillHex" value="#eaead2" spellcheck="false" />
+    <div class="pane" id="generalPane">
+      <div class="pane-head" id="generalPaneHead">
+        <span class="section-label">General settings</span>
+        <span class="chev">▼</span>
       </div>
-    </div>
+      <div class="pane-body">
+        <div class="control">
+          <label for="fillColor">Fill (artwork &amp; text)</label>
+          <div class="color-row">
+            <input type="color" id="fillColor" value="#eaead2" />
+            <input type="text" class="hex" id="fillHex" value="#eaead2" spellcheck="false" />
+          </div>
+        </div>
 
-    <div class="control">
-      <label for="bgColor">Background</label>
-      <div class="color-row">
-        <input type="color" id="bgColor" value="#000000" />
-        <input type="text" class="hex" id="bgHex" value="#000000" spellcheck="false" />
-      </div>
-    </div>
+        <div class="control">
+          <label for="bgColor">Background</label>
+          <div class="color-row">
+            <input type="color" id="bgColor" value="#000000" />
+            <input type="text" class="hex" id="bgHex" value="#000000" spellcheck="false" />
+          </div>
+        </div>
 
-    <div class="control">
-      <span class="section-label">Text placement</span>
-      <div class="setup-row">
-        <select id="mode">
-          <option value="below">Below — text under logo (tall)</option>
-          <option value="side">Side — text right of logo (wide)</option>
-        </select>
-      </div>
-    </div>
+        <div class="control">
+          <span class="section-label">Text placement</span>
+          <div class="setup-row">
+            <select id="mode">
+              <option value="below">Below — text under logo (tall)</option>
+              <option value="side">Side — text right of logo (wide)</option>
+            </select>
+          </div>
+        </div>
 
-    <div class="control">
-      <div class="slider-head">
-        <label for="heightRegulator" style="margin:0">Height regulator</label>
-        <span class="val" id="heightRegulatorVal">0</span>
-      </div>
-      <input type="range" id="heightRegulator" min="-125" max="109" value="0" />
-    </div>
+        <div class="control">
+          <div class="slider-head">
+            <label for="heightRegulator" style="margin:0">Height regulator</label>
+            <span class="val" id="heightRegulatorVal">0</span>
+          </div>
+          <input type="range" id="heightRegulator" min="-125" max="109" value="0" />
+        </div>
 
-    <div class="control">
-      <div class="slider-head">
-        <label for="textGap" style="margin:0">Logo–text gap</label>
-        <span class="val" id="textGapVal">48</span>
-      </div>
-      <input type="range" id="textGap" min="0" max="240" value="48" />
-    </div>
+        <div class="control">
+          <div class="slider-head">
+            <label for="textGap" style="margin:0">Logo–text gap</label>
+            <span class="val" id="textGapVal">48</span>
+          </div>
+          <input type="range" id="textGap" min="0" max="240" value="48" />
+        </div>
 
-    <div class="control">
-      <div class="slider-head">
-        <label for="lineSpacing" style="margin:0">Line spacing</label>
-        <span class="val" id="lineSpacingVal">30</span>
+        <div class="control">
+          <div class="slider-head">
+            <label for="lineSpacing" style="margin:0">Line spacing</label>
+            <span class="val" id="lineSpacingVal">30</span>
+          </div>
+          <input type="range" id="lineSpacing" min="0" max="140" step="1" value="30" />
+        </div>
+
+        <div class="control">
+          <div class="slider-head">
+            <label for="outerMargin" style="margin:0">Outer frame</label>
+            <span class="val" id="outerMarginVal">0</span>
+          </div>
+          <input type="range" id="outerMargin" min="0" max="300" value="0" />
+        </div>
       </div>
-      <input type="range" id="lineSpacing" min="0" max="140" step="1" value="30" />
     </div>
 
     <div class="control">
