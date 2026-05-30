@@ -105,6 +105,12 @@
     background: #303030; border-color: #444;
   }
   .add-line { width: 100%; margin-top: 4px; }
+  .export-note {
+    font-size: 11px; color: var(--panel-muted); margin-top: 8px; line-height: 1.4;
+    min-height: 14px;
+  }
+  .export-note.busy { color: var(--accent); }
+  .export-note.err  { color: #e06c6c; }
 
   /* ---- Saved setups ---- */
   .setup-row { display: flex; gap: 8px; margin-bottom: 8px; }
@@ -334,6 +340,56 @@
       </div>
     </div>
 
+    <div class="pane" id="exportPane">
+      <div class="pane-head" id="exportPaneHead">
+        <span class="section-label">Export</span>
+        <span class="chev">▼</span>
+      </div>
+      <div class="pane-body">
+        <div class="control">
+          <span class="section-label">Format</span>
+          <div class="setup-row">
+            <select id="exportFormat">
+              <optgroup label="Vector (print · foil/folio cut · web)">
+                <option value="svg">SVG — self-contained</option>
+              </optgroup>
+              <optgroup label="Raster (variable resolution)">
+                <option value="png">PNG</option>
+                <option value="jpg">JPG</option>
+                <option value="webp">WebP</option>
+              </optgroup>
+            </select>
+          </div>
+        </div>
+
+        <div class="control" id="exportWidthControl">
+          <div class="slider-head">
+            <label for="exportWidth" style="margin:0">Width (px)</label>
+            <span class="val" id="exportSizeInfo">—</span>
+          </div>
+          <input type="range" id="exportWidth" min="256" max="6000" step="64" value="2000" />
+        </div>
+
+        <div class="control" id="exportQualityControl">
+          <div class="slider-head">
+            <label for="exportQuality" style="margin:0">Quality</label>
+            <span class="val" id="exportQualityVal">92%</span>
+          </div>
+          <input type="range" id="exportQuality" min="50" max="100" step="1" value="92" />
+        </div>
+
+        <div class="checkbox-row" id="exportTransparentRow">
+          <input type="checkbox" id="exportTransparent" />
+          <label for="exportTransparent">Transparent background</label>
+        </div>
+
+        <div class="control">
+          <button class="add-line" id="exportBtn" style="margin-top:4px">⬇ Export</button>
+          <div class="export-note" id="exportNote"></div>
+        </div>
+      </div>
+    </div>
+
     <div class="control">
       <div class="actions">
         <button id="swap">Swap colors</button>
@@ -416,6 +472,19 @@
     swap:     document.getElementById("swap"),
     reset:    document.getElementById("reset"),
     popout:   document.getElementById("popout"),
+    exportPane:     document.getElementById("exportPane"),
+    exportPaneHead: document.getElementById("exportPaneHead"),
+    exportFormat:   document.getElementById("exportFormat"),
+    exportWidth:    document.getElementById("exportWidth"),
+    exportWidthControl:   document.getElementById("exportWidthControl"),
+    exportSizeInfo:       document.getElementById("exportSizeInfo"),
+    exportQuality:        document.getElementById("exportQuality"),
+    exportQualityVal:     document.getElementById("exportQualityVal"),
+    exportQualityControl: document.getElementById("exportQualityControl"),
+    exportTransparent:    document.getElementById("exportTransparent"),
+    exportTransparentRow: document.getElementById("exportTransparentRow"),
+    exportBtn:  document.getElementById("exportBtn"),
+    exportNote: document.getElementById("exportNote"),
     setupSelect: document.getElementById("setupSelect"),
     setupName:   document.getElementById("setupName"),
     saveSetup:   document.getElementById("saveSetup"),
@@ -679,6 +748,7 @@
     els.frame.style.background = state.bg;
 
     syncPopout();
+    if (els.exportSizeInfo) syncExportUI();
     persistLast();
   }
 
@@ -1027,6 +1097,166 @@
   });
 
   els.popout.addEventListener("click", openPopout);
+
+  /* =========================================================================
+     EXPORT  (vector SVG for print/cut/web · raster PNG/JPG/WebP at any size)
+     ========================================================================= */
+  let fontCSSCache = null;
+
+  function bufToB64(buf) {
+    const bytes = new Uint8Array(buf);
+    let bin = "";
+    const chunk = 0x8000;
+    for (let i = 0; i < bytes.length; i += chunk) {
+      bin += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk));
+    }
+    return btoa(bin);
+  }
+
+  // Fetch the Outfit weights we use and inline them as base64 @font-face, so
+  // the exported SVG is self-contained and rasterizes with the real font.
+  // Best-effort: on any failure returns "" (file still works, text falls back).
+  async function getEmbeddedFontCSS() {
+    if (fontCSSCache !== null) return fontCSSCache;
+    const weights = new Set([state.weight]);
+    state.textLines.forEach(l => { if (l.type === "text") weights.add(l.weight || state.weight); });
+    const list = [...weights].sort((a, b) => a - b).join(";");
+    const cssUrl = `https://fonts.googleapis.com/css2?family=Outfit:wght@${list}&display=swap`;
+    try {
+      const ctrl = new AbortController();
+      const to = setTimeout(() => ctrl.abort(), 9000);
+      const css = await (await fetch(cssUrl, { signal: ctrl.signal })).text();
+      const blocks = css.split("@font-face");
+      let out = "";
+      for (let i = 1; i < blocks.length; i++) {
+        const b = blocks[i];
+        const wM = b.match(/font-weight:\s*(\d+)/);
+        const uM = b.match(/url\((https:[^)]+\.woff2)\)/);
+        if (!uM) continue;
+        const buf = await (await fetch(uM[1], { signal: ctrl.signal })).arrayBuffer();
+        out += `@font-face{font-family:'Outfit';font-style:normal;font-weight:${wM ? wM[1] : 400};`
+             + `src:url(data:font/woff2;base64,${bufToB64(buf)}) format('woff2');}`;
+      }
+      clearTimeout(to);
+      fontCSSCache = out;
+    } catch (e) {
+      console.warn("Font embed failed; exporting without embedded font.", e);
+      fontCSSCache = "";
+    }
+    return fontCSSCache;
+  }
+
+  // Build a standalone SVG string from the live artwork.
+  async function buildExportSVG({ transparent, embedFont }) {
+    const clone = svgEl.cloneNode(true);
+    const vb = svgEl.getAttribute("viewBox").split(/[\s,]+/).map(Number);
+    clone.setAttribute("xmlns", SVGNS);
+    clone.setAttribute("width", vb[2]);
+    clone.setAttribute("height", vb[3]);
+    if (transparent) {
+      const bg = clone.querySelector("rect");   // the background rect is first
+      if (bg) bg.remove();
+    }
+    if (embedFont) {
+      const fontCSS = await getEmbeddedFontCSS();
+      if (fontCSS) {
+        const style = document.createElementNS(SVGNS, "style");
+        style.textContent = fontCSS;
+        clone.insertBefore(style, clone.firstChild);
+      }
+    }
+    return '<?xml version="1.0" encoding="UTF-8"?>\n' + clone.outerHTML;
+  }
+
+  function downloadBlob(blob, filename) {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = filename;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1500);
+  }
+
+  function rasterize(svgStr, w, h, fmt, quality, transparent) {
+    return new Promise((resolve, reject) => {
+      const url = URL.createObjectURL(new Blob([svgStr], { type: "image/svg+xml;charset=utf-8" }));
+      const img = new Image();
+      img.onload = () => {
+        const c = document.createElement("canvas");
+        c.width = w; c.height = h;
+        const ctx = c.getContext("2d");
+        if (fmt === "jpg" || !transparent) { ctx.fillStyle = state.bg; ctx.fillRect(0, 0, w, h); }
+        ctx.drawImage(img, 0, 0, w, h);
+        URL.revokeObjectURL(url);
+        const mime = fmt === "jpg" ? "image/jpeg" : fmt === "webp" ? "image/webp" : "image/png";
+        c.toBlob(b => b ? resolve(b) : reject(new Error("encoding failed")), mime, quality);
+      };
+      img.onerror = () => { URL.revokeObjectURL(url); reject(new Error("SVG render failed")); };
+      img.src = url;
+    });
+  }
+
+  function exportDims() {
+    const vb = svgEl.getAttribute("viewBox").split(/[\s,]+/).map(Number);
+    const w = Number(els.exportWidth.value);
+    const h = Math.round(w * vb[3] / vb[2]);
+    return { vbW: vb[2], vbH: vb[3], w, h };
+  }
+
+  function syncExportUI() {
+    const fmt = els.exportFormat.value;
+    const isVector = fmt === "svg";
+    const isJpg = fmt === "jpg";
+    els.exportWidthControl.style.display   = isVector ? "none" : "";
+    els.exportQualityControl.style.display = (fmt === "jpg" || fmt === "webp") ? "" : "none";
+    els.exportTransparentRow.style.display = (fmt === "svg" || fmt === "png" || fmt === "webp") ? "" : "none";
+    if (isVector) {
+      const { vbW, vbH } = exportDims();
+      els.exportSizeInfo.textContent = `${Math.round(vbW)}×${Math.round(vbH)} units`;
+    } else {
+      const { w, h } = exportDims();
+      els.exportSizeInfo.textContent = `${w}×${h}px`;
+    }
+  }
+
+  async function doExport() {
+    const fmt = els.exportFormat.value;
+    const note = els.exportNote;
+    els.exportBtn.disabled = true;
+    note.className = "export-note busy";
+    note.textContent = "Preparing… (embedding font)";
+    try {
+      const transparent = els.exportTransparent.checked && fmt !== "jpg";
+      const svgStr = await buildExportSVG({ transparent, embedFont: true });
+      if (fmt === "svg") {
+        downloadBlob(new Blob([svgStr], { type: "image/svg+xml" }), "eva-lyneborg-logo.svg");
+        note.className = "export-note"; note.textContent = "Saved SVG (vector, self-contained).";
+      } else {
+        const { w, h } = exportDims();
+        const q = Number(els.exportQuality.value) / 100;
+        const blob = await rasterize(svgStr, w, h, fmt, q, transparent);
+        const ext = fmt === "jpg" ? "jpg" : fmt;
+        downloadBlob(blob, "eva-lyneborg-logo." + ext);
+        note.className = "export-note";
+        note.textContent = `Saved ${ext.toUpperCase()} ${w}×${h}px.`;
+      }
+    } catch (e) {
+      note.className = "export-note err";
+      note.textContent = "Export failed: " + e.message;
+      console.error(e);
+    } finally {
+      els.exportBtn.disabled = false;
+    }
+  }
+
+  els.exportFormat.addEventListener("change", syncExportUI);
+  els.exportWidth.addEventListener("input", syncExportUI);
+  els.exportQuality.addEventListener("input", () => {
+    els.exportQualityVal.textContent = els.exportQuality.value + "%";
+  });
+  els.exportBtn.addEventListener("click", doExport);
+  els.exportPaneHead.addEventListener("click", () => {
+    els.exportPane.classList.toggle("collapsed");
+  });
 
   // ---- Saved setups ----
   els.saveSetup.addEventListener("click", () => {
