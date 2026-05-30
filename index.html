@@ -6,7 +6,7 @@
 <title>Eva Lyneborg — Logo Studio</title>
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-<link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700&display=swap" rel="stylesheet" />
+<link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700&display=swap" rel="stylesheet" />
 <style>
   :root {
     --panel-bg: #1a1a1a;
@@ -221,7 +221,7 @@
 
   // --- Geometry / layout constants (in the logo's SVG coordinate units) ---
   const TOP_THRESHOLD = 35;   // frame-top Y values below this belong to the top bar
-  const CAP_RATIO     = 0.72; // all-caps visual height as a fraction of font-size (Figtree)
+  const CAP_RATIO     = 0.72; // all-caps visual height as a fraction of font-size (Outfit)
   const TEXT_TOP_GAP  = 48;   // gap from frame bottom to the first text line
   const TEXT_LINE_GAP = 30;   // equal gap between consecutive text lines
   const BOTTOM_PAD    = 36;   // padding below the last line
@@ -334,7 +334,7 @@
       t.setAttribute("y", targetInkTop);            // tentative; corrected below
       t.setAttribute("textLength", frameMetrics.width);
       t.setAttribute("lengthAdjust", "spacing");    // spread spacing, keep letterforms
-      t.setAttribute("font-family", "Figtree, Arial, sans-serif");
+      t.setAttribute("font-family", "Outfit, Arial, sans-serif");
       t.setAttribute("font-weight", "500");
       t.setAttribute("font-size", size);
       t.setAttribute("dominant-baseline", "hanging");
