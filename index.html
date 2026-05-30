@@ -120,10 +120,49 @@
   .text-row {
     border: 1px solid var(--panel-border);
     border-radius: 8px;
-    padding: 10px;
     margin-bottom: 10px;
     background: #161616;
+    overflow: hidden;
   }
+  .text-row.dragging { opacity: 0.45; }
+  .text-row.drop-before { box-shadow: 0 -3px 0 0 var(--accent); }
+  .text-row.drop-after  { box-shadow: 0  3px 0 0 var(--accent); }
+
+  /* row header (always visible): handle • title • collapse • delete */
+  .tl-head {
+    display: flex; align-items: center; gap: 8px;
+    padding: 9px 10px;
+    background: #1f1f1f;
+    border-bottom: 1px solid var(--panel-border);
+    user-select: none;
+  }
+  .text-row.collapsed .tl-head { border-bottom: none; }
+  .tl-handle {
+    cursor: grab; color: var(--panel-muted); font-size: 14px;
+    line-height: 1; letter-spacing: -1px;
+  }
+  .tl-handle:active { cursor: grabbing; }
+  .tl-kind {
+    font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em;
+    color: var(--accent); border: 1px solid #2c3b54; background: #16202e;
+    border-radius: 4px; padding: 2px 6px; white-space: nowrap;
+  }
+  .tl-kind.is-line { color: #c9a96a; border-color: #4a3f28; background: #241f14; }
+  .tl-title {
+    flex: 1; min-width: 0; font-size: 12px; color: var(--panel-fg);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    text-transform: uppercase; letter-spacing: 0.04em;
+  }
+  .tl-title.empty { color: var(--panel-muted); font-style: italic; text-transform: none; letter-spacing: 0; }
+  .tl-collapse {
+    background: none; border: none; color: var(--panel-muted);
+    cursor: pointer; font-size: 11px; padding: 2px 4px; line-height: 1;
+    transition: transform 0.12s ease;
+  }
+  .text-row.collapsed .tl-collapse { transform: rotate(-90deg); }
+  .tl-body { padding: 10px; }
+  .text-row.collapsed .tl-body { display: none; }
+
   .text-row .tl-text {
     width: 100%;
     background: #111;
@@ -366,11 +405,14 @@
     // Normalize items (older saves may lack `type`, `weight`, or `thickness`).
     next.textLines = next.textLines.map(l =>
       l && l.type === "line"
-        ? { type: "line", thickness: (typeof l.thickness === "number") ? l.thickness : null }
+        ? { type: "line",
+            thickness: (typeof l.thickness === "number") ? l.thickness : null,
+            collapsed: !!(l && l.collapsed) }
         : { type: "text",
             text: (l && l.text) || "",
             size: (l && l.size) || 60,
-            weight: (l && l.weight) || next.weight || 500 }
+            weight: (l && l.weight) || next.weight || 500,
+            collapsed: !!(l && l.collapsed) }
     );
     state = next;
   }
@@ -600,10 +642,23 @@
       : "min(70vmin, 560px)";
   }
 
-  // Text-line UI (rebuilt only on add/delete/load so typing keeps focus).
+  // Move an item from one index to another and re-render.
+  function moveLine(from, to) {
+    if (from === to || from < 0 || to < 0 ||
+        from >= state.textLines.length || to >= state.textLines.length) return;
+    const [item] = state.textLines.splice(from, 1);
+    state.textLines.splice(to, 0, item);
+    rebuildTextRows();
+    render();
+  }
+
+  // Text-line UI. Each item is a card: header (handle • kind • title •
+  // collapse • delete) + a collapsible body. Rebuilt on add/delete/load/reorder
+  // (typing/sliding only updates state + preview, so focus is preserved).
   function rebuildTextRows() {
     els.textLines.innerHTML = "";
     const step = state.freeSize ? 1 : 10;
+    const frameTh = frameMetrics ? Math.round(frameMetrics.thickness) : 15;
 
     const makeDelete = (idx) => {
       const del = document.createElement("button");
@@ -613,113 +668,146 @@
       del.addEventListener("click", () => {
         state.textLines.splice(idx, 1);
         if (state.textLines.length === 0)
-          state.textLines.push({ type: "text", text: "", size: 60 });
+          state.textLines.push({ type: "text", text: "", size: 60, weight: state.weight });
         rebuildTextRows();
         render();
       });
       return del;
     };
 
+    const makeSlider = (cls, min, max, stp, val, fmt, onInput) => {
+      const wrap = document.createElement("div");
+      wrap.className = "size-line";
+      const cap = document.createElement("span");
+      cap.className = "cap"; cap.textContent = cls;
+      const inp = document.createElement("input");
+      inp.type = "range"; inp.className = "tl-size";
+      inp.min = String(min); inp.max = String(max); inp.step = String(stp);
+      inp.value = val;
+      const out = document.createElement("span");
+      out.className = "tl-size-val"; out.textContent = fmt(val);
+      if (cls === "Weight") out.style.width = "64px";
+      inp.addEventListener("input", e => {
+        const v = Number(e.target.value);
+        out.textContent = fmt(v);
+        onInput(v);
+      });
+      wrap.append(cap, inp, out);
+      return wrap;
+    };
+
     state.textLines.forEach((line, idx) => {
+      const isLine = line.type === "line";
+
       const row = document.createElement("div");
-      row.className = "text-row";
+      row.className = "text-row" + (line.collapsed ? " collapsed" : "");
+      row.dataset.idx = idx;
 
-      // Rule row — just a label and a delete button (thickness is fixed).
-      if (line.type === "line") {
-        const ruleLine = document.createElement("div");
-        ruleLine.className = "size-line";
-        const cap = document.createElement("span");
-        cap.className = "cap";
-        cap.textContent = "Line";
+      /* ---- header ---- */
+      const head = document.createElement("div");
+      head.className = "tl-head";
 
-        const frameTh = frameMetrics ? Math.round(frameMetrics.thickness) : 15;
-        const thNow = (line.thickness == null) ? frameTh : Math.round(line.thickness);
+      const handle = document.createElement("span");
+      handle.className = "tl-handle";
+      handle.textContent = "⠿";
+      handle.title = "Drag to reorder";
 
-        const thInput = document.createElement("input");
-        thInput.type = "range"; thInput.className = "tl-size";
-        thInput.min = "1"; thInput.max = String(frameTh * 2); thInput.step = "1";
-        thInput.value = thNow;
+      const kind = document.createElement("span");
+      kind.className = "tl-kind" + (isLine ? " is-line" : "");
+      kind.textContent = isLine ? "Line" : "Text";
 
-        const thVal = document.createElement("span");
-        thVal.className = "tl-size-val";
-        thVal.textContent = thNow;
-
-        thInput.addEventListener("input", e => {
-          const v = Number(e.target.value);
-          state.textLines[idx].thickness = v;
-          thVal.textContent = v;
-          render();
-        });
-
-        ruleLine.append(cap, thInput, thVal, makeDelete(idx));
-        row.append(ruleLine);
-        els.textLines.appendChild(row);
-        return;
+      const title = document.createElement("span");
+      title.className = "tl-title";
+      if (isLine) {
+        title.textContent = "Horizontal line";
+      } else if ((line.text || "").trim()) {
+        title.textContent = line.text;
+      } else {
+        title.textContent = "(empty text)";
+        title.classList.add("empty");
       }
 
-      const textInput = document.createElement("input");
-      textInput.type = "text";
-      textInput.className = "tl-text";
-      textInput.value = line.text;
-      textInput.placeholder = "LINE TEXT";
-      textInput.spellcheck = false;
-      textInput.addEventListener("input", e => {
-        state.textLines[idx].text = e.target.value;
-        render();
+      const collapse = document.createElement("button");
+      collapse.className = "tl-collapse";
+      collapse.title = "Collapse / expand";
+      collapse.textContent = "▼";
+      collapse.addEventListener("click", () => {
+        line.collapsed = !line.collapsed;
+        row.classList.toggle("collapsed", !!line.collapsed);
+        persistLast();
       });
 
-      const sizeLine = document.createElement("div");
-      sizeLine.className = "size-line";
+      head.append(handle, kind, title, collapse, makeDelete(idx));
+      row.append(head);
 
-      const cap = document.createElement("span");
-      cap.className = "cap";
-      cap.textContent = "Size";
+      /* ---- body ---- */
+      const body = document.createElement("div");
+      body.className = "tl-body";
 
-      const sizeInput = document.createElement("input");
-      sizeInput.type = "range";
-      sizeInput.className = "tl-size";
-      sizeInput.min = "20"; sizeInput.max = "200"; sizeInput.step = String(step);
-      sizeInput.value = line.size;
+      if (isLine) {
+        const thNow = (line.thickness == null) ? frameTh : Math.round(line.thickness);
+        body.append(makeSlider("Thickness", 1, frameTh * 2, 1, thNow, v => v, v => {
+          state.textLines[idx].thickness = v; render();
+        }));
+      } else {
+        const textInput = document.createElement("input");
+        textInput.type = "text";
+        textInput.className = "tl-text";
+        textInput.value = line.text;
+        textInput.placeholder = "LINE TEXT";
+        textInput.spellcheck = false;
+        textInput.addEventListener("input", e => {
+          state.textLines[idx].text = e.target.value;
+          title.textContent = e.target.value.trim() || "(empty text)";
+          title.classList.toggle("empty", !e.target.value.trim());
+          render();
+        });
+        body.append(textInput);
 
-      const sizeVal = document.createElement("span");
-      sizeVal.className = "tl-size-val";
-      sizeVal.textContent = line.size;
+        body.append(makeSlider("Size", 20, 200, step, line.size, v => v, v => {
+          state.textLines[idx].size = v; render();
+        }));
 
-      sizeInput.addEventListener("input", e => {
-        const v = Number(e.target.value);
-        state.textLines[idx].size = v;
-        sizeVal.textContent = v;
-        render();
+        const w = line.weight || state.weight;
+        body.append(makeSlider("Weight", 100, 900, 100, w,
+          v => WEIGHT_NAMES[v], v => { state.textLines[idx].weight = v; render(); }));
+      }
+
+      row.append(body);
+
+      /* ---- drag & drop reordering (whole card draggable via handle) ---- */
+      handle.addEventListener("mousedown", () => { row.draggable = true; });
+      row.addEventListener("dragend", () => { row.draggable = false; });
+      handle.addEventListener("touchstart", () => { row.draggable = true; }, { passive: true });
+
+      row.addEventListener("dragstart", e => {
+        dragFromIdx = idx;
+        row.classList.add("dragging");
+        e.dataTransfer.effectAllowed = "move";
+        try { e.dataTransfer.setData("text/plain", String(idx)); } catch (_) {}
+      });
+      row.addEventListener("dragover", e => {
+        e.preventDefault();
+        const after = (e.clientY - row.getBoundingClientRect().top) > row.offsetHeight / 2;
+        row.classList.toggle("drop-after", after);
+        row.classList.toggle("drop-before", !after);
+      });
+      row.addEventListener("dragleave", () => {
+        row.classList.remove("drop-before", "drop-after");
+      });
+      row.addEventListener("drop", e => {
+        e.preventDefault();
+        const after = row.classList.contains("drop-after");
+        row.classList.remove("drop-before", "drop-after");
+        let to = idx + (after ? 1 : 0);
+        if (dragFromIdx < to) to -= 1;   // account for the removed source item
+        moveLine(dragFromIdx, to);
       });
 
-      sizeLine.append(cap, sizeInput, sizeVal, makeDelete(idx));
-
-      // Per-line font weight slider (100 Thin … 900 Black).
-      const wLine = document.createElement("div");
-      wLine.className = "size-line";
-      const wCap = document.createElement("span");
-      wCap.className = "cap";
-      wCap.textContent = "Weight";
-      const wInput = document.createElement("input");
-      wInput.type = "range"; wInput.className = "tl-size";
-      wInput.min = "100"; wInput.max = "900"; wInput.step = "100";
-      wInput.value = line.weight || state.weight;
-      const wVal = document.createElement("span");
-      wVal.className = "tl-size-val";
-      wVal.style.width = "64px";
-      wVal.textContent = WEIGHT_NAMES[line.weight || state.weight];
-      wInput.addEventListener("input", e => {
-        const v = Number(e.target.value);
-        state.textLines[idx].weight = v;
-        wVal.textContent = WEIGHT_NAMES[v];
-        render();
-      });
-      wLine.append(wCap, wInput, wVal);
-
-      row.append(textInput, sizeLine, wLine);
       els.textLines.appendChild(row);
     });
   }
+  let dragFromIdx = -1;
 
   function normalizeHex(v) {
     v = v.trim();
