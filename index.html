@@ -45,15 +45,8 @@
     margin: 0 0 28px;
   }
   .control { margin-bottom: 26px; }
-  .section-label {
-    display: block;
-    font-size: 12px;
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
-    color: var(--panel-muted);
-    margin-bottom: 8px;
-  }
-  .control > label { /* same as section-label */
+  .section-label,
+  .control > label {
     display: block;
     font-size: 12px;
     text-transform: uppercase;
@@ -89,9 +82,16 @@
     font-size: 13px;
     color: var(--panel-fg);
   }
+  .checkbox-row {
+    display: flex; align-items: center; gap: 8px; margin-top: 10px;
+    font-size: 12px; color: var(--panel-muted);
+    text-transform: uppercase; letter-spacing: 0.05em;
+  }
+  .checkbox-row input { accent-color: var(--accent); width: 15px; height: 15px; cursor: pointer; }
+  .checkbox-row label { cursor: pointer; }
+
   .actions { display: flex; gap: 10px; margin-top: 8px; }
-  .actions button, .add-line {
-    flex: 1;
+  .actions button, .add-line, .setup-row button {
     background: #262626;
     color: var(--panel-fg);
     border: 1px solid var(--panel-border);
@@ -100,8 +100,21 @@
     font-size: 13px;
     cursor: pointer;
   }
-  .actions button:hover, .add-line:hover { background: #303030; border-color: #444; }
+  .actions button { flex: 1; }
+  .actions button:hover, .add-line:hover, .setup-row button:hover {
+    background: #303030; border-color: #444;
+  }
   .add-line { width: 100%; margin-top: 4px; }
+
+  /* ---- Saved setups ---- */
+  .setup-row { display: flex; gap: 8px; margin-bottom: 8px; }
+  .setup-row select, .setup-row input {
+    flex: 1; min-width: 0;
+    background: #111; border: 1px solid var(--panel-border);
+    border-radius: 6px; color: var(--panel-fg);
+    font-size: 13px; padding: 8px 10px;
+  }
+  .setup-row button { white-space: nowrap; }
 
   /* ---- Text lines ---- */
   .text-row {
@@ -165,6 +178,19 @@
     <p class="sub">Eva Lyneborg</p>
 
     <div class="control">
+      <span class="section-label">Saved setups</span>
+      <div class="setup-row">
+        <select id="setupSelect"><option value="">— last session —</option></select>
+        <button id="loadSetup">Load</button>
+        <button id="deleteSetup">Del</button>
+      </div>
+      <div class="setup-row">
+        <input id="setupName" placeholder="New setup name" spellcheck="false" />
+        <button id="saveSetup">Save</button>
+      </div>
+    </div>
+
+    <div class="control">
       <label for="fillColor">Fill (artwork &amp; text)</label>
       <div class="color-row">
         <input type="color" id="fillColor" value="#eaead2" />
@@ -189,9 +215,29 @@
     </div>
 
     <div class="control">
+      <div class="slider-head">
+        <label for="weight" style="margin:0">Font weight</label>
+        <span class="val" id="weightVal">Medium</span>
+      </div>
+      <input type="range" id="weight" min="400" max="700" step="100" value="500" />
+    </div>
+
+    <div class="control">
+      <div class="slider-head">
+        <label for="lineSpacing" style="margin:0">Line spacing</label>
+        <span class="val" id="lineSpacingVal">30</span>
+      </div>
+      <input type="range" id="lineSpacing" min="0" max="140" step="1" value="30" />
+    </div>
+
+    <div class="control">
       <span class="section-label">Text lines (fill logo width)</span>
       <div id="textLines"></div>
       <button class="add-line" id="addLine">+ Add line</button>
+      <div class="checkbox-row">
+        <input type="checkbox" id="freeSize" />
+        <label for="freeSize">Free size (step 1, otherwise 10)</label>
+      </div>
     </div>
 
     <div class="control">
@@ -211,19 +257,28 @@
 <script>
   const SVGNS = "http://www.w3.org/2000/svg";
 
-  // Visual defaults (text lines are user content, not reset).
-  const VISUAL_DEFAULTS = { fill: "#eaead2", bg: "#000000", heightRegulator: 0 };
-
-  const state = {
-    ...VISUAL_DEFAULTS,
+  // Full default state. Saving/loading serializes this WHOLE object, so any
+  // future setting added here is automatically persisted and restored.
+  const DEFAULTS = {
+    fill: "#eaead2",
+    bg: "#000000",
+    heightRegulator: 0,
+    weight: 500,
+    lineSpacing: 30,
+    freeSize: false,
     textLines: [ { text: "EVA LYNEBORG", size: 70 } ],
   };
+  // Settings restored by "Reset" (everything visual except the text content).
+  const RESET_KEYS = ["fill", "bg", "heightRegulator", "weight", "lineSpacing"];
+
+  let state = structuredClone(DEFAULTS);
+
+  const WEIGHT_NAMES = { 400: "Regular", 500: "Medium", 600: "SemiBold", 700: "Bold" };
 
   // --- Geometry / layout constants (in the logo's SVG coordinate units) ---
   const TOP_THRESHOLD = 35;   // frame-top Y values below this belong to the top bar
   const CAP_RATIO     = 0.72; // all-caps visual height as a fraction of font-size (Outfit)
   const TEXT_TOP_GAP  = 48;   // gap from frame bottom to the first text line
-  const TEXT_LINE_GAP = 30;   // equal gap between consecutive text lines
   const BOTTOM_PAD    = 36;   // padding below the last line
 
   const els = {
@@ -234,23 +289,74 @@
     bgHex:    document.getElementById("bgHex"),
     heightRegulator:    document.getElementById("heightRegulator"),
     heightRegulatorVal: document.getElementById("heightRegulatorVal"),
+    weight:    document.getElementById("weight"),
+    weightVal: document.getElementById("weightVal"),
+    lineSpacing:    document.getElementById("lineSpacing"),
+    lineSpacingVal: document.getElementById("lineSpacingVal"),
+    freeSize: document.getElementById("freeSize"),
     textLines: document.getElementById("textLines"),
     addLine:  document.getElementById("addLine"),
     swap:     document.getElementById("swap"),
     reset:    document.getElementById("reset"),
+    setupSelect: document.getElementById("setupSelect"),
+    setupName:   document.getElementById("setupName"),
+    saveSetup:   document.getElementById("saveSetup"),
+    loadSetup:   document.getElementById("loadSetup"),
+    deleteSetup: document.getElementById("deleteSetup"),
   };
 
-  let svgEl = null;        // the live inlined <svg>
-  let framePath = null;    // first <path> = the rectangular frame
-  let frameOrigD = "";     // its untouched path data
-  let baseViewBox = null;  // the SVG's original viewBox {x, y, w, h}
-  let bgRect = null;       // background <rect> covering the viewBox
-  let textGroup = null;    // <g> holding the text lines
-  let frameMetrics = null; // {left, width, bottom} of the frame, in SVG units
+  let svgEl = null, framePath = null, frameOrigD = "";
+  let baseViewBox = null, bgRect = null, textGroup = null, frameMetrics = null;
 
+  /* =========================================================================
+     LOCAL STORAGE  (last session + named setups)
+     The whole `state` object is stored as JSON, so adding new settings later
+     needs no storage changes — they ride along automatically.
+     ========================================================================= */
+  const LS_KEY = "evalyneborg_logostudio_v1";
+
+  function loadDB() {
+    try { return JSON.parse(localStorage.getItem(LS_KEY)) || {}; }
+    catch { return {}; }
+  }
+  function saveDB(db) {
+    try { localStorage.setItem(LS_KEY, JSON.stringify(db)); } catch (e) { console.warn(e); }
+  }
+  // Autosave the working state as "last session".
+  function persistLast() {
+    const db = loadDB();
+    db.last = structuredClone(state);
+    saveDB(db);
+  }
+  // Merge a stored object onto a fresh default, so missing/older keys keep a
+  // sane default (forward- and backward-compatible).
+  function adoptState(obj) {
+    const next = structuredClone(DEFAULTS);
+    if (obj && typeof obj === "object") {
+      for (const k of Object.keys(obj)) next[k] = structuredClone(obj[k]);
+    }
+    if (!Array.isArray(next.textLines) || next.textLines.length === 0) {
+      next.textLines = structuredClone(DEFAULTS.textLines);
+    }
+    state = next;
+  }
+
+  function refreshSetupList(selectedName = "") {
+    const db = loadDB();
+    const setups = db.setups || {};
+    const names = Object.keys(setups).sort((a, b) => a.localeCompare(b));
+    els.setupSelect.innerHTML =
+      '<option value="">— last session —</option>' +
+      names.map(n => `<option value="${escapeAttr(n)}">${escapeHtml(n)}</option>`).join("");
+    els.setupSelect.value = selectedName;
+  }
+  function escapeHtml(s){return s.replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));}
+  function escapeAttr(s){return escapeHtml(s).replace(/"/g,"&quot;");}
+
+  /* =========================================================================
+     SVG LOAD + RENDER
+     ========================================================================= */
   // Shift the Y of every coordinate on the top bar by `dy`.
-  // The frame path is built only from M / C / z commands, so every number is
-  // part of an (x, y) pair — odd-indexed numbers are the Y values.
   function shiftFrameTop(d, dy) {
     let i = 0;
     return d.replace(/-?\d*\.?\d+/g, (m) => {
@@ -263,8 +369,6 @@
     });
   }
 
-  // Load and inline the SVG so we can recolor its paths and add text.
-  // Filename case matters on Linux hosts (e.g. GitHub Pages): file is LOGO.svg.
   fetch("LOGO.svg")
     .then(r => r.text())
     .then(text => {
@@ -279,23 +383,23 @@
       const vb = svgEl.getAttribute("viewBox").split(/[\s,]+/).map(Number);
       baseViewBox = { x: vb[0], y: vb[1], w: vb[2], h: vb[3] };
 
-      // Stable frame metrics (left/width/bottom never change; only the top moves).
       const fb = framePath.getBBox();
       frameMetrics = { left: fb.x, width: fb.width, bottom: fb.y + fb.height };
 
-      // Background rect — first child, so it sits behind everything. Makes the
-      // SVG self-contained (important for future SVG export).
       bgRect = document.createElementNS(SVGNS, "rect");
       svgEl.insertBefore(bgRect, svgEl.firstChild);
 
-      // Text group — last child, drawn in front.
       textGroup = document.createElementNS(SVGNS, "g");
       svgEl.appendChild(textGroup);
 
+      // Restore last session if present.
+      const db = loadDB();
+      if (db.last) adoptState(db.last);
+      refreshSetupList();
+      syncUIFromState();
       rebuildTextRows();
       render();
 
-      // Re-render once the web font is ready so textLength reflects real metrics.
       if (document.fonts && document.fonts.ready) {
         document.fonts.ready.then(render);
       }
@@ -306,10 +410,7 @@
       console.error(err);
     });
 
-  // Build the text lines into the SVG. Each line's visible ink is made to span
-  // the frame width *exactly*, and the gaps between lines' ink are kept equal
-  // by measuring real glyph metrics rather than estimating from font-size.
-  // Returns the Y of the last line's ink bottom (or frame bottom if no lines).
+  // Build the text lines into the SVG; returns the Y of the last ink bottom.
   function layoutText() {
     while (textGroup.firstChild) textGroup.removeChild(textGroup.firstChild);
 
@@ -319,48 +420,40 @@
     state.textLines.forEach((line, i) => {
       const size = line.size;
       const content = (line.text || "").toUpperCase();
-      const gap = (i === 0) ? TEXT_TOP_GAP : TEXT_LINE_GAP;
+      const gap = (i === 0) ? TEXT_TOP_GAP : state.lineSpacing;
       const targetInkTop = prevInkBottom + gap;
 
       if (!content.length) {
-        // No ink to measure — reserve an estimated band so spacing stays sane
-        // while the user is mid-typing on a freshly added line.
         prevInkBottom = targetInkTop + size * CAP_RATIO;
         return;
       }
 
       const t = document.createElementNS(SVGNS, "text");
       t.setAttribute("x", frameMetrics.left);
-      t.setAttribute("y", targetInkTop);            // tentative; corrected below
+      t.setAttribute("y", targetInkTop);
       t.setAttribute("textLength", frameMetrics.width);
-      t.setAttribute("lengthAdjust", "spacing");    // spread spacing, keep letterforms
+      t.setAttribute("lengthAdjust", "spacing");
       t.setAttribute("font-family", "Outfit, Arial, sans-serif");
-      t.setAttribute("font-weight", "500");
+      t.setAttribute("font-weight", state.weight);
       t.setAttribute("font-size", size);
       t.setAttribute("dominant-baseline", "hanging");
       t.setAttribute("fill", state.fill);
       t.textContent = content;
       textGroup.appendChild(t);
 
-      // (1) Vertical: make the ink TOP land exactly on targetInkTop, so the gap
-      // above this line is exactly `gap`. The hanging baseline sits a little
-      // above the ink; shifting y moves the ink by the same amount (linear),
-      // so a single measured correction is exact.
+      // Vertical: land the ink TOP exactly on targetInkTop (equal gaps).
       let b = t.getBBox();
       const yShift = targetInkTop - b.y;
-      const correctedY = targetInkTop + yShift;
-      t.setAttribute("y", correctedY);
+      t.setAttribute("y", targetInkTop + yShift);
 
-      // (2) Horizontal: make the ink span the frame width exactly. textLength
-      // controls glyph advance, so side bearings inset the visible ink; measure
-      // and compensate. Bearings are intrinsic to the glyphs → one pass is exact.
+      // Horizontal: make visible ink span the frame width exactly.
       b = t.getBBox();
       const leftBearing  = b.x - frameMetrics.left;
       const rightBearing = frameRight - (b.x + b.width);
       t.setAttribute("x", frameMetrics.left - leftBearing);
       t.setAttribute("textLength", frameMetrics.width + leftBearing + rightBearing);
 
-      prevInkBottom = targetInkTop + b.height;       // exact ink bottom
+      prevInkBottom = targetInkTop + b.height;
     });
 
     return prevInkBottom;
@@ -369,31 +462,25 @@
   function render() {
     if (!svgEl) return;
 
-    // Recolor the artwork (frame + face).
     svgEl.querySelectorAll("g, path").forEach(node => {
       if (node.getAttribute("fill") !== null || node.tagName === "path") {
         node.setAttribute("fill", state.fill);
       }
     });
 
-    // Reposition the top bar of the frame.
     if (framePath) {
       framePath.setAttribute("d", shiftFrameTop(frameOrigD, state.heightRegulator));
     }
 
-    // Lay out the text below the logo.
     const textBottom = layoutText();
 
-    // Compute the viewBox: extend up when the bar rises above its origin, and
-    // down to fit the text. Default framing stays pixel-identical.
-    const barTop = 11 + state.heightRegulator;          // outer top edge of frame
+    const barTop = 11 + state.heightRegulator;
     const minY = Math.min(baseViewBox.y, barTop - 15);
     const baseBottom = baseViewBox.y + baseViewBox.h;
     const maxY = Math.max(baseBottom, textBottom + BOTTOM_PAD);
     svgEl.setAttribute("viewBox",
       `${baseViewBox.x} ${minY} ${baseViewBox.w} ${maxY - minY}`);
 
-    // Background rect fills the whole (possibly grown) viewBox.
     bgRect.setAttribute("x", baseViewBox.x);
     bgRect.setAttribute("y", minY);
     bgRect.setAttribute("width", baseViewBox.w);
@@ -401,13 +488,31 @@
     bgRect.setAttribute("fill", state.bg);
 
     els.frame.style.background = state.bg;
-    els.heightRegulatorVal.textContent =
-      (state.heightRegulator > 0 ? "+" : "") + state.heightRegulator;
+
+    persistLast();
   }
 
-  // ---- Text-line UI (rebuilt only on add/delete so typing keeps focus) ----
+  /* =========================================================================
+     UI SYNC
+     ========================================================================= */
+  function syncUIFromState() {
+    els.fillColor.value = state.fill; els.fillHex.value = state.fill;
+    els.bgColor.value = state.bg;     els.bgHex.value = state.bg;
+    els.heightRegulator.value = state.heightRegulator;
+    els.heightRegulatorVal.textContent =
+      (state.heightRegulator > 0 ? "+" : "") + state.heightRegulator;
+    els.weight.value = state.weight;
+    els.weightVal.textContent = WEIGHT_NAMES[state.weight] || state.weight;
+    els.lineSpacing.value = state.lineSpacing;
+    els.lineSpacingVal.textContent = state.lineSpacing;
+    els.freeSize.checked = !!state.freeSize;
+  }
+
+  // Text-line UI (rebuilt only on add/delete/load so typing keeps focus).
   function rebuildTextRows() {
     els.textLines.innerHTML = "";
+    const step = state.freeSize ? 1 : 10;
+
     state.textLines.forEach((line, idx) => {
       const row = document.createElement("div");
       row.className = "text-row";
@@ -433,7 +538,7 @@
       const sizeInput = document.createElement("input");
       sizeInput.type = "range";
       sizeInput.className = "tl-size";
-      sizeInput.min = "20"; sizeInput.max = "200"; sizeInput.step = "1";
+      sizeInput.min = "20"; sizeInput.max = "200"; sizeInput.step = String(step);
       sizeInput.value = line.size;
 
       const sizeVal = document.createElement("span");
@@ -453,6 +558,7 @@
       del.textContent = "×";
       del.addEventListener("click", () => {
         state.textLines.splice(idx, 1);
+        if (state.textLines.length === 0) state.textLines.push({ text: "", size: 60 });
         rebuildTextRows();
         render();
       });
@@ -469,7 +575,9 @@
     return /^#[0-9a-fA-F]{6}$/.test(v) ? v.toLowerCase() : null;
   }
 
-  // Fill color
+  /* =========================================================================
+     EVENT WIRING
+     ========================================================================= */
   els.fillColor.addEventListener("input", e => {
     state.fill = e.target.value; els.fillHex.value = state.fill; render();
   });
@@ -479,7 +587,6 @@
     else { els.fillHex.value = state.fill; }
   });
 
-  // Background color
   els.bgColor.addEventListener("input", e => {
     state.bg = e.target.value; els.bgHex.value = state.bg; render();
   });
@@ -489,19 +596,37 @@
     else { els.bgHex.value = state.bg; }
   });
 
-  // Height regulator
   els.heightRegulator.addEventListener("input", e => {
-    state.heightRegulator = Number(e.target.value); render();
+    state.heightRegulator = Number(e.target.value);
+    els.heightRegulatorVal.textContent =
+      (state.heightRegulator > 0 ? "+" : "") + state.heightRegulator;
+    render();
   });
 
-  // Add a text line
+  els.weight.addEventListener("input", e => {
+    state.weight = Number(e.target.value);
+    els.weightVal.textContent = WEIGHT_NAMES[state.weight] || state.weight;
+    render();
+  });
+
+  els.lineSpacing.addEventListener("input", e => {
+    state.lineSpacing = Number(e.target.value);
+    els.lineSpacingVal.textContent = state.lineSpacing;
+    render();
+  });
+
+  els.freeSize.addEventListener("change", e => {
+    state.freeSize = e.target.checked;
+    rebuildTextRows();   // updates each size slider's step
+    render();
+  });
+
   els.addLine.addEventListener("click", () => {
     state.textLines.push({ text: "", size: 60 });
     rebuildTextRows();
     render();
   });
 
-  // Swap fill <-> background
   els.swap.addEventListener("click", () => {
     [state.fill, state.bg] = [state.bg, state.fill];
     els.fillColor.value = state.fill; els.fillHex.value = state.fill;
@@ -509,13 +634,47 @@
     render();
   });
 
-  // Reset visual settings (keeps text content)
   els.reset.addEventListener("click", () => {
-    Object.assign(state, VISUAL_DEFAULTS);
-    els.fillColor.value = state.fill; els.fillHex.value = state.fill;
-    els.bgColor.value = state.bg;     els.bgHex.value = state.bg;
-    els.heightRegulator.value = state.heightRegulator;
+    for (const k of RESET_KEYS) state[k] = structuredClone(DEFAULTS[k]);
+    syncUIFromState();
+    rebuildTextRows();
     render();
+  });
+
+  // ---- Saved setups ----
+  els.saveSetup.addEventListener("click", () => {
+    const name = els.setupName.value.trim();
+    if (!name) { els.setupName.focus(); return; }
+    const db = loadDB();
+    db.setups = db.setups || {};
+    db.setups[name] = structuredClone(state);
+    saveDB(db);
+    els.setupName.value = "";
+    refreshSetupList(name);
+  });
+
+  els.loadSetup.addEventListener("click", () => {
+    const name = els.setupSelect.value;
+    const db = loadDB();
+    if (name && db.setups && db.setups[name]) {
+      adoptState(db.setups[name]);
+    } else if (db.last) {
+      adoptState(db.last);
+    }
+    syncUIFromState();
+    rebuildTextRows();
+    render();
+  });
+
+  els.deleteSetup.addEventListener("click", () => {
+    const name = els.setupSelect.value;
+    if (!name) return;
+    const db = loadDB();
+    if (db.setups && db.setups[name]) {
+      delete db.setups[name];
+      saveDB(db);
+      refreshSetupList();
+    }
   });
 </script>
 </body>
