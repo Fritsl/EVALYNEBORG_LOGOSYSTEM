@@ -798,6 +798,29 @@
     holder.innerHTML = svgEl.outerHTML;          // self-contained SVG (incl. bg rect)
   }
 
+  // Enter/leave the "popped" layout: when the preview lives in its own window
+  // the main window hides its inline preview and lays the controls out edge to
+  // edge in multiple columns.
+  function setPopped(on) {
+    document.body.classList.toggle("popped", on);
+    els.popout.textContent = on
+      ? "⧉ Preview popped out — click to refocus"
+      : "⧉ Pop out preview (2nd monitor)";
+  }
+
+  // Poll for the popup being closed by the user, then restore the inline layout.
+  let popWatch = null;
+  function watchPopout() {
+    clearInterval(popWatch);
+    popWatch = setInterval(() => {
+      if (!popoutWin || popoutWin.closed) {
+        clearInterval(popWatch);
+        popoutWin = null;
+        setPopped(false);
+      }
+    }, 600);
+  }
+
   function openPopout() {
     if (popoutWin && !popoutWin.closed) { popoutWin.focus(); syncPopout(); return; }
     popoutWin = window.open("", "evalyneborgPreview", "width=900,height=900");
@@ -805,6 +828,8 @@
     popoutWin.document.open();
     popoutWin.document.write(popoutDocHTML());
     popoutWin.document.close();
+    setPopped(true);
+    watchPopout();
     // Give the new document a tick to build #holder, then push the artwork.
     const tryFill = (n) => {
       if (!popoutWin || popoutWin.closed) return;
@@ -813,6 +838,11 @@
     };
     tryFill(20);
   }
+
+  // If the main window is closed/refreshed, close the child preview too.
+  window.addEventListener("beforeunload", () => {
+    if (popoutWin && !popoutWin.closed) popoutWin.close();
+  });
 
   /* =========================================================================
      UI SYNC
