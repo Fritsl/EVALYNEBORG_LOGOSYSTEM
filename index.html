@@ -286,7 +286,13 @@
   /* ---- Popped-out layout: preview is in its own window, so the main window
          becomes a full-width control surface laid out in neat columns. ---- */
   body.popped { grid-template-columns: 1fr; }
-  body.popped .stage { display: none; }
+  /* Keep the stage RENDERED (so SVG getBBox text-measuring still works) but
+     moved off-screen, instead of display:none which zeroes all measurements
+     and breaks the text layout while popped out. */
+  body.popped .stage {
+    position: fixed; left: -10000px; top: 0;
+    width: 600px; height: 600px; padding: 0; pointer-events: none;
+  }
   body.popped .panel {
     border-right: none;
     padding: 28px 36px;
@@ -745,18 +751,24 @@
       t.textContent = content;
       textGroup.appendChild(t);
 
-      // Vertical: land the ink TOP exactly on targetInkTop (equal gaps).
+      // Measure. If the SVG is not currently measurable (e.g. in a hidden
+      // subtree, getBBox returns zeros), skip the fine corrections instead of
+      // producing NaN — the text still shows at the column width.
       let b = t.getBBox();
-      t.setAttribute("y", targetInkTop + (targetInkTop - b.y));
-
-      // Horizontal: make visible ink span the column width exactly.
-      b = t.getBBox();
-      const leftBearing  = b.x - left;
-      const rightBearing = right - (b.x + b.width);
-      t.setAttribute("x", left - leftBearing);
-      t.setAttribute("textLength", width + leftBearing + rightBearing);
-
-      prevInkBottom = targetInkTop + b.height;
+      if (b.width > 0 && isFinite(b.x)) {
+        // Vertical: land the ink TOP exactly on targetInkTop (equal gaps).
+        t.setAttribute("y", targetInkTop + (targetInkTop - b.y));
+        // Horizontal: make visible ink span the column width exactly.
+        b = t.getBBox();
+        const leftBearing  = b.x - left;
+        const rightBearing = right - (b.x + b.width);
+        t.setAttribute("x", left - leftBearing);
+        t.setAttribute("textLength", width + leftBearing + rightBearing);
+        prevInkBottom = targetInkTop + b.height;
+      } else {
+        // Fallback height estimate when not measurable.
+        prevInkBottom = targetInkTop + size * CAP_RATIO;
+      }
     });
 
     return prevInkBottom;
