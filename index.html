@@ -112,6 +112,55 @@
   .export-note.busy { color: var(--accent); }
   .export-note.err  { color: #e06c6c; }
 
+  /* ---- Gallery overlay (compare saved setups side by side) ---- */
+  .gallery {
+    position: fixed; inset: 0; z-index: 1000;
+    background: rgba(8,8,8,0.96);
+    display: none; flex-direction: column;
+  }
+  .gallery.open { display: flex; }
+  .gallery-head {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 16px 24px; border-bottom: 1px solid var(--panel-border);
+  }
+  .gallery-head h2 {
+    margin: 0; font-size: 15px; letter-spacing: 0.08em; text-transform: uppercase;
+    font-weight: 600;
+  }
+  .gallery-head .hint { color: var(--panel-muted); font-size: 12px; margin-left: 14px; font-weight: 400; }
+  .gallery-close {
+    background: #262626; color: var(--panel-fg); border: 1px solid var(--panel-border);
+    border-radius: 8px; padding: 8px 16px; font-size: 13px; cursor: pointer;
+  }
+  .gallery-close:hover { background: #303030; }
+  .gallery-grid {
+    flex: 1; overflow-y: auto; padding: 24px;
+    display: grid; gap: 20px;
+    grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+    align-content: start;
+  }
+  .tile {
+    border: 1px solid var(--panel-border); border-radius: 10px;
+    background: #141414; overflow: hidden; cursor: pointer;
+    transition: border-color .12s, transform .12s;
+    display: flex; flex-direction: column;
+  }
+  .tile:hover { border-color: var(--accent); transform: translateY(-2px); }
+  .tile.current { border-color: #4a6; }
+  .tile-art {
+    aspect-ratio: 1 / 1; display: flex; align-items: center; justify-content: center;
+    padding: 14px; background: #0c0c0c;
+  }
+  .tile-art svg { max-width: 100%; max-height: 100%; width: auto; height: auto; }
+  .tile-name {
+    padding: 9px 12px; font-size: 12px; color: var(--panel-fg);
+    border-top: 1px solid var(--panel-border);
+    display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  }
+  .tile-name .nm { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .tile-name .badge { color: #6a6; font-size: 10px; text-transform: uppercase; letter-spacing: .06em; }
+  .gallery-empty { color: var(--panel-muted); font-size: 14px; padding: 40px; }
+
   /* ---- Saved setups ---- */
   .setup-row { display: flex; gap: 8px; margin-bottom: 8px; }
   .setup-row select, .setup-row input {
@@ -267,6 +316,7 @@
         <input id="setupName" placeholder="New setup name" spellcheck="false" />
         <button id="saveSetup">Save</button>
       </div>
+      <button class="add-line" id="openGallery" style="margin-top:4px">⊞ Compare all (gallery)</button>
     </div>
 
     <div class="pane" id="generalPane">
@@ -421,6 +471,14 @@
     </div>
   </main>
 
+  <div class="gallery" id="gallery">
+    <div class="gallery-head">
+      <h2>Gallery <span class="hint">click a design to load it</span></h2>
+      <button class="gallery-close" id="galleryClose">Close ✕</button>
+    </div>
+    <div class="gallery-grid" id="galleryGrid"></div>
+  </div>
+
 <script>
   const SVGNS = "http://www.w3.org/2000/svg";
 
@@ -488,6 +546,10 @@
     swap:     document.getElementById("swap"),
     reset:    document.getElementById("reset"),
     popout:   document.getElementById("popout"),
+    openGallery:  document.getElementById("openGallery"),
+    gallery:      document.getElementById("gallery"),
+    galleryGrid:  document.getElementById("galleryGrid"),
+    galleryClose: document.getElementById("galleryClose"),
     exportPane:     document.getElementById("exportPane"),
     exportPaneHead: document.getElementById("exportPaneHead"),
     exportFormat:   document.getElementById("exportFormat"),
@@ -763,10 +825,15 @@
 
     els.frame.style.background = state.bg;
 
-    syncPopout();
-    if (els.exportSizeInfo) syncExportUI();
-    persistLast();
+    if (!suppressSideEffects) {
+      syncPopout();
+      if (els.exportSizeInfo) syncExportUI();
+      persistLast();
+    }
   }
+  // When true, render() skips persistence / popout / export side-effects, so we
+  // can momentarily render other states (for gallery thumbnails) without saving.
+  let suppressSideEffects = false;
 
   /* =========================================================================
      POP-OUT PREVIEW  (open the composed logo in its own window / 2nd monitor)
@@ -1339,6 +1406,95 @@
       refreshSetupList();
     }
   });
+
+  /* =========================================================================
+     GALLERY  (render every saved setup as a thumbnail; click one to load it)
+     ========================================================================= */
+  // Build a standalone SVG string for an arbitrary saved state, by momentarily
+  // applying it, rendering, snapshotting, then restoring the live state.
+  function composeSVGForState(obj) {
+    const saved = state;
+    suppressSideEffects = true;
+    try {
+      adoptState(obj);          // sets global `state` (normalized)
+      render();                 // lays out svgEl for this state
+      const clone = svgEl.cloneNode(true);
+      const vb = svgEl.getAttribute("viewBox").split(/[\s,]+/).map(Number);
+      clone.setAttribute("xmlns", SVGNS);
+      clone.setAttribute("width", vb[2]);
+      clone.setAttribute("height", vb[3]);
+      return clone.outerHTML;
+    } finally {
+      state = saved;            // restore the live state object
+      suppressSideEffects = false;
+      render();                 // redraw the real preview
+    }
+  }
+
+  function firstTextLabel(obj) {
+    const t = (obj.textLines || []).find(l => l.type === "text" && (l.text || "").trim());
+    return t ? t.text : "(no text)";
+  }
+
+  function makeTile(label, stateObj, { current = false, name = null } = {}) {
+    const tile = document.createElement("div");
+    tile.className = "tile" + (current ? " current" : "");
+
+    const art = document.createElement("div");
+    art.className = "tile-art";
+    art.innerHTML = composeSVGForState(stateObj);
+
+    const cap = document.createElement("div");
+    cap.className = "tile-name";
+    const nm = document.createElement("span");
+    nm.className = "nm";
+    nm.textContent = label;
+    cap.appendChild(nm);
+    if (current) {
+      const b = document.createElement("span");
+      b.className = "badge"; b.textContent = "current";
+      cap.appendChild(b);
+    }
+
+    tile.append(art, cap);
+    tile.addEventListener("click", () => {
+      adoptState(stateObj);
+      syncUIFromState();
+      rebuildTextRows();
+      render();
+      if (name) refreshSetupList(name);
+      closeGallery();
+    });
+    return tile;
+  }
+
+  function openGallery() {
+    const grid = els.galleryGrid;
+    grid.innerHTML = "";
+    const db = loadDB();
+    const setups = db.setups || {};
+    const names = Object.keys(setups).sort((a, b) => a.localeCompare(b));
+
+    // First tile: the current working design.
+    grid.appendChild(makeTile(firstTextLabel(state) + " — working", structuredClone(state), { current: true }));
+
+    // Then each saved setup.
+    names.forEach(n => grid.appendChild(makeTile(n, setups[n], { name: n })));
+
+    if (!names.length) {
+      const note = document.createElement("div");
+      note.className = "gallery-empty";
+      note.textContent = "No saved setups yet — use “Save” to store designs, then they appear here side by side.";
+      grid.appendChild(note);
+    }
+    els.gallery.classList.add("open");
+  }
+  function closeGallery() { els.gallery.classList.remove("open"); }
+
+  els.openGallery.addEventListener("click", openGallery);
+  els.galleryClose.addEventListener("click", closeGallery);
+  els.gallery.addEventListener("click", e => { if (e.target === els.gallery) closeGallery(); });
+  document.addEventListener("keydown", e => { if (e.key === "Escape") closeGallery(); });
 </script>
 </body>
 </html>
