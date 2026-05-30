@@ -207,6 +207,16 @@
     </div>
 
     <div class="control">
+      <span class="section-label">Text placement</span>
+      <div class="setup-row">
+        <select id="mode">
+          <option value="below">Below — text under logo (tall)</option>
+          <option value="side">Side — text right of logo (wide)</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="control">
       <div class="slider-head">
         <label for="heightRegulator" style="margin:0">Height regulator</label>
         <span class="val" id="heightRegulatorVal">0</span>
@@ -265,6 +275,7 @@
   const DEFAULTS = {
     fill: "#eaead2",
     bg: "#000000",
+    mode: "below",          // "below" = text under logo, "side" = text to the right
     heightRegulator: 0,
     weight: 500,
     lineSpacing: 30,
@@ -283,8 +294,10 @@
   // --- Geometry / layout constants (in the logo's SVG coordinate units) ---
   const TOP_THRESHOLD = 35;   // frame-top Y values below this belong to the top bar
   const CAP_RATIO     = 0.72; // all-caps visual height as a fraction of font-size (Outfit)
-  const TEXT_TOP_GAP  = 48;   // gap from frame bottom to the first text line
-  const BOTTOM_PAD    = 36;   // padding below the last line
+  const TEXT_TOP_GAP  = 48;   // gap from frame bottom to the first text line (below mode)
+  const BOTTOM_PAD    = 36;   // padding below the last line (below mode)
+  const SIDE_GAP      = 56;   // gap between logo right edge and text column (side mode)
+  const SIDE_PAD      = 36;   // padding right of the text column (side mode)
 
   const els = {
     frame:    document.getElementById("frame"),
@@ -292,6 +305,7 @@
     fillHex:  document.getElementById("fillHex"),
     bgColor:  document.getElementById("bgColor"),
     bgHex:    document.getElementById("bgHex"),
+    mode:     document.getElementById("mode"),
     heightRegulator:    document.getElementById("heightRegulator"),
     heightRegulatorVal: document.getElementById("heightRegulatorVal"),
     weight:    document.getElementById("weight"),
@@ -430,23 +444,25 @@
       console.error(err);
     });
 
-  // Build the text lines into the SVG; returns the Y of the last ink bottom.
-  function layoutText() {
+  // Lay the text/line items into a column [left, left+width], with the first
+  // item's ink top starting at `startTop` and equal `lineSpacing` between
+  // items. Each text line's ink is stretched to span the column width exactly.
+  // Returns the Y of the last ink bottom.
+  function layoutText(left, width, startTop) {
     while (textGroup.firstChild) textGroup.removeChild(textGroup.firstChild);
 
-    let prevInkBottom = frameMetrics.bottom;
-    const frameRight = frameMetrics.left + frameMetrics.width;
+    const right = left + width;
+    let prevInkBottom = startTop;
 
     state.textLines.forEach((line, i) => {
-      const gap = (i === 0) ? TEXT_TOP_GAP : state.lineSpacing;
-      const targetInkTop = prevInkBottom + gap;
+      const targetInkTop = (i === 0) ? startTop : prevInkBottom + state.lineSpacing;
 
-      // Horizontal rule — same thickness as the logo frame, full frame width.
+      // Horizontal rule — same thickness as the logo frame, full column width.
       if (line.type === "line") {
         const r = document.createElementNS(SVGNS, "rect");
-        r.setAttribute("x", frameMetrics.left);
+        r.setAttribute("x", left);
         r.setAttribute("y", targetInkTop);
-        r.setAttribute("width", frameMetrics.width);
+        r.setAttribute("width", width);
         r.setAttribute("height", frameMetrics.thickness);
         r.setAttribute("fill", state.fill);
         textGroup.appendChild(r);
@@ -463,9 +479,9 @@
       }
 
       const t = document.createElementNS(SVGNS, "text");
-      t.setAttribute("x", frameMetrics.left);
+      t.setAttribute("x", left);
       t.setAttribute("y", targetInkTop);
-      t.setAttribute("textLength", frameMetrics.width);
+      t.setAttribute("textLength", width);
       t.setAttribute("lengthAdjust", "spacing");
       t.setAttribute("font-family", "Outfit, Arial, sans-serif");
       t.setAttribute("font-weight", state.weight);
@@ -477,15 +493,14 @@
 
       // Vertical: land the ink TOP exactly on targetInkTop (equal gaps).
       let b = t.getBBox();
-      const yShift = targetInkTop - b.y;
-      t.setAttribute("y", targetInkTop + yShift);
+      t.setAttribute("y", targetInkTop + (targetInkTop - b.y));
 
-      // Horizontal: make visible ink span the frame width exactly.
+      // Horizontal: make visible ink span the column width exactly.
       b = t.getBBox();
-      const leftBearing  = b.x - frameMetrics.left;
-      const rightBearing = frameRight - (b.x + b.width);
-      t.setAttribute("x", frameMetrics.left - leftBearing);
-      t.setAttribute("textLength", frameMetrics.width + leftBearing + rightBearing);
+      const leftBearing  = b.x - left;
+      const rightBearing = right - (b.x + b.width);
+      t.setAttribute("x", left - leftBearing);
+      t.setAttribute("textLength", width + leftBearing + rightBearing);
 
       prevInkBottom = targetInkTop + b.height;
     });
@@ -506,18 +521,43 @@
       framePath.setAttribute("d", shiftFrameTop(frameOrigD, state.heightRegulator));
     }
 
-    const textBottom = layoutText();
+    const barTop      = 11 + state.heightRegulator;     // outer top edge of frame
+    const frameRight  = frameMetrics.left + frameMetrics.width;
+    const baseBottom  = baseViewBox.y + baseViewBox.h;
 
-    const barTop = 11 + state.heightRegulator;
-    const minY = Math.min(baseViewBox.y, barTop - 15);
-    const baseBottom = baseViewBox.y + baseViewBox.h;
-    const maxY = Math.max(baseBottom, textBottom + BOTTOM_PAD);
-    svgEl.setAttribute("viewBox",
-      `${baseViewBox.x} ${minY} ${baseViewBox.w} ${maxY - minY}`);
+    let minX, minY, maxX, maxY;
 
-    bgRect.setAttribute("x", baseViewBox.x);
+    if (state.mode === "side") {
+      // Text column to the RIGHT of the logo, vertically centred on the logo.
+      const colLeft  = frameRight + SIDE_GAP;
+      const colWidth = frameMetrics.width;            // same width as the logo
+
+      // Pass 1: lay out at top 0 to measure total text height.
+      const h = layoutText(colLeft, colWidth, 0);
+      const regionTop = barTop, regionBottom = frameMetrics.bottom;
+      const desiredTop = regionTop + (regionBottom - regionTop - h) / 2;
+
+      // Pass 2: lay out at the centred top.
+      layoutText(colLeft, colWidth, desiredTop);
+
+      minX = baseViewBox.x;
+      maxX = colLeft + colWidth + SIDE_PAD;
+      minY = Math.min(baseViewBox.y, barTop - 15, desiredTop - SIDE_PAD);
+      maxY = Math.max(baseBottom, desiredTop + h + SIDE_PAD);
+    } else {
+      // Text BELOW the logo (default).
+      const textBottom = layoutText(frameMetrics.left, frameMetrics.width,
+                                    frameMetrics.bottom + TEXT_TOP_GAP);
+      minX = baseViewBox.x;
+      maxX = baseViewBox.x + baseViewBox.w;
+      minY = Math.min(baseViewBox.y, barTop - 15);
+      maxY = Math.max(baseBottom, textBottom + BOTTOM_PAD);
+    }
+
+    svgEl.setAttribute("viewBox", `${minX} ${minY} ${maxX - minX} ${maxY - minY}`);
+    bgRect.setAttribute("x", minX);
     bgRect.setAttribute("y", minY);
-    bgRect.setAttribute("width", baseViewBox.w);
+    bgRect.setAttribute("width", maxX - minX);
     bgRect.setAttribute("height", maxY - minY);
     bgRect.setAttribute("fill", state.bg);
 
@@ -532,6 +572,8 @@
   function syncUIFromState() {
     els.fillColor.value = state.fill; els.fillHex.value = state.fill;
     els.bgColor.value = state.bg;     els.bgHex.value = state.bg;
+    els.mode.value = state.mode;
+    applyStageWidth();
     els.heightRegulator.value = state.heightRegulator;
     els.heightRegulatorVal.textContent =
       (state.heightRegulator > 0 ? "+" : "") + state.heightRegulator;
@@ -540,6 +582,13 @@
     els.lineSpacing.value = state.lineSpacing;
     els.lineSpacingVal.textContent = state.lineSpacing;
     els.freeSize.checked = !!state.freeSize;
+  }
+
+  // Wider preview frame in side mode so the tall+wide artwork has room.
+  function applyStageWidth() {
+    els.frame.style.width = state.mode === "side"
+      ? "min(92vw, 1100px)"
+      : "min(70vmin, 560px)";
   }
 
   // Text-line UI (rebuilt only on add/delete/load so typing keeps focus).
@@ -646,6 +695,12 @@
     const hex = normalizeHex(e.target.value);
     if (hex) { state.bg = hex; els.bgColor.value = hex; els.bgHex.value = hex; render(); }
     else { els.bgHex.value = state.bg; }
+  });
+
+  els.mode.addEventListener("change", e => {
+    state.mode = e.target.value;
+    applyStageWidth();
+    render();
   });
 
   els.heightRegulator.addEventListener("input", e => {
