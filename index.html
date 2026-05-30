@@ -6,7 +6,7 @@
 <title>Eva Lyneborg — Logo Studio</title>
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-<link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700&display=swap" rel="stylesheet" />
+<link href="https://fonts.googleapis.com/css2?family=Outfit:wght@100;200;300;400;500;600;700;800;900&display=swap" rel="stylesheet" />
 <style>
   :root {
     --panel-bg: #1a1a1a;
@@ -226,10 +226,10 @@
 
     <div class="control">
       <div class="slider-head">
-        <label for="weight" style="margin:0">Font weight</label>
-        <span class="val" id="weightVal">Medium</span>
+        <label for="textGap" style="margin:0">Logo–text gap</label>
+        <span class="val" id="textGapVal">48</span>
       </div>
-      <input type="range" id="weight" min="400" max="700" step="100" value="500" />
+      <input type="range" id="textGap" min="0" max="240" value="48" />
     </div>
 
     <div class="control">
@@ -277,27 +277,32 @@
     bg: "#000000",
     mode: "below",          // "below" = text under logo, "side" = text to the right
     heightRegulator: 0,
-    weight: 500,
+    weight: 500,            // default weight applied to newly added text lines
     lineSpacing: 30,
+    textGap: 48,            // gap between the logo and the text block
     freeSize: false,
-    // Each item is either { type:"text", text, size } or { type:"line" } (a
-    // horizontal rule with the same thickness as the logo frame).
-    textLines: [ { type: "text", text: "EVA LYNEBORG", size: 70 } ],
+    // Each item is either:
+    //   { type:"text", text, size, weight }              a text line
+    //   { type:"line", thickness }                       a horizontal rule
+    // thickness === null means "use the frame thickness".
+    textLines: [ { type: "text", text: "EVA LYNEBORG", size: 70, weight: 500 } ],
   };
   // Settings restored by "Reset" (everything visual except the text content).
-  const RESET_KEYS = ["fill", "bg", "heightRegulator", "weight", "lineSpacing"];
+  const RESET_KEYS = ["fill", "bg", "heightRegulator", "weight", "lineSpacing", "textGap"];
 
   let state = structuredClone(DEFAULTS);
 
-  const WEIGHT_NAMES = { 400: "Regular", 500: "Medium", 600: "SemiBold", 700: "Bold" };
+  const WEIGHT_NAMES = {
+    100: "Thin", 200: "ExtraLight", 300: "Light", 400: "Regular", 500: "Medium",
+    600: "SemiBold", 700: "Bold", 800: "ExtraBold", 900: "Black",
+  };
 
   // --- Geometry / layout constants (in the logo's SVG coordinate units) ---
   const TOP_THRESHOLD = 35;   // frame-top Y values below this belong to the top bar
   const CAP_RATIO     = 0.72; // all-caps visual height as a fraction of font-size (Outfit)
-  const TEXT_TOP_GAP  = 48;   // gap from frame bottom to the first text line (below mode)
   const BOTTOM_PAD    = 36;   // padding below the last line (below mode)
-  const SIDE_GAP      = 56;   // gap between logo right edge and text column (side mode)
   const SIDE_PAD      = 36;   // padding right of the text column (side mode)
+  // (the logo↔text gap is user-controlled via state.textGap)
 
   const els = {
     frame:    document.getElementById("frame"),
@@ -308,8 +313,8 @@
     mode:     document.getElementById("mode"),
     heightRegulator:    document.getElementById("heightRegulator"),
     heightRegulatorVal: document.getElementById("heightRegulatorVal"),
-    weight:    document.getElementById("weight"),
-    weightVal: document.getElementById("weightVal"),
+    textGap:    document.getElementById("textGap"),
+    textGapVal: document.getElementById("textGapVal"),
     lineSpacing:    document.getElementById("lineSpacing"),
     lineSpacingVal: document.getElementById("lineSpacingVal"),
     freeSize: document.getElementById("freeSize"),
@@ -358,11 +363,14 @@
     if (!Array.isArray(next.textLines) || next.textLines.length === 0) {
       next.textLines = structuredClone(DEFAULTS.textLines);
     }
-    // Normalize items (older saves had no `type` — treat those as text).
+    // Normalize items (older saves may lack `type`, `weight`, or `thickness`).
     next.textLines = next.textLines.map(l =>
       l && l.type === "line"
-        ? { type: "line" }
-        : { type: "text", text: (l && l.text) || "", size: (l && l.size) || 60 }
+        ? { type: "line", thickness: (typeof l.thickness === "number") ? l.thickness : null }
+        : { type: "text",
+            text: (l && l.text) || "",
+            size: (l && l.size) || 60,
+            weight: (l && l.weight) || next.weight || 500 }
     );
     state = next;
   }
@@ -457,16 +465,17 @@
     state.textLines.forEach((line, i) => {
       const targetInkTop = (i === 0) ? startTop : prevInkBottom + state.lineSpacing;
 
-      // Horizontal rule — same thickness as the logo frame, full column width.
+      // Horizontal rule — adjustable thickness (defaults to frame thickness).
       if (line.type === "line") {
+        const th = (line.thickness == null) ? frameMetrics.thickness : line.thickness;
         const r = document.createElementNS(SVGNS, "rect");
         r.setAttribute("x", left);
         r.setAttribute("y", targetInkTop);
         r.setAttribute("width", width);
-        r.setAttribute("height", frameMetrics.thickness);
+        r.setAttribute("height", th);
         r.setAttribute("fill", state.fill);
         textGroup.appendChild(r);
-        prevInkBottom = targetInkTop + frameMetrics.thickness;
+        prevInkBottom = targetInkTop + th;
         return;
       }
 
@@ -484,7 +493,7 @@
       t.setAttribute("textLength", width);
       t.setAttribute("lengthAdjust", "spacing");
       t.setAttribute("font-family", "Outfit, Arial, sans-serif");
-      t.setAttribute("font-weight", state.weight);
+      t.setAttribute("font-weight", line.weight || state.weight);
       t.setAttribute("font-size", size);
       t.setAttribute("dominant-baseline", "hanging");
       t.setAttribute("fill", state.fill);
@@ -529,7 +538,7 @@
 
     if (state.mode === "side") {
       // Text column to the RIGHT of the logo, vertically centred on the logo.
-      const colLeft  = frameRight + SIDE_GAP;
+      const colLeft  = frameRight + state.textGap;
       const colWidth = frameMetrics.width;            // same width as the logo
 
       // Pass 1: lay out at top 0 to measure total text height.
@@ -547,7 +556,7 @@
     } else {
       // Text BELOW the logo (default).
       const textBottom = layoutText(frameMetrics.left, frameMetrics.width,
-                                    frameMetrics.bottom + TEXT_TOP_GAP);
+                                    frameMetrics.bottom + state.textGap);
       minX = baseViewBox.x;
       maxX = baseViewBox.x + baseViewBox.w;
       minY = Math.min(baseViewBox.y, barTop - 15);
@@ -577,8 +586,8 @@
     els.heightRegulator.value = state.heightRegulator;
     els.heightRegulatorVal.textContent =
       (state.heightRegulator > 0 ? "+" : "") + state.heightRegulator;
-    els.weight.value = state.weight;
-    els.weightVal.textContent = WEIGHT_NAMES[state.weight] || state.weight;
+    els.textGap.value = state.textGap;
+    els.textGapVal.textContent = state.textGap;
     els.lineSpacing.value = state.lineSpacing;
     els.lineSpacingVal.textContent = state.lineSpacing;
     els.freeSize.checked = !!state.freeSize;
@@ -621,9 +630,28 @@
         ruleLine.className = "size-line";
         const cap = document.createElement("span");
         cap.className = "cap";
-        cap.style.flex = "1";
-        cap.textContent = "— Line (frame thickness)";
-        ruleLine.append(cap, makeDelete(idx));
+        cap.textContent = "Line";
+
+        const frameTh = frameMetrics ? Math.round(frameMetrics.thickness) : 15;
+        const thNow = (line.thickness == null) ? frameTh : Math.round(line.thickness);
+
+        const thInput = document.createElement("input");
+        thInput.type = "range"; thInput.className = "tl-size";
+        thInput.min = "1"; thInput.max = String(frameTh * 2); thInput.step = "1";
+        thInput.value = thNow;
+
+        const thVal = document.createElement("span");
+        thVal.className = "tl-size-val";
+        thVal.textContent = thNow;
+
+        thInput.addEventListener("input", e => {
+          const v = Number(e.target.value);
+          state.textLines[idx].thickness = v;
+          thVal.textContent = v;
+          render();
+        });
+
+        ruleLine.append(cap, thInput, thVal, makeDelete(idx));
         row.append(ruleLine);
         els.textLines.appendChild(row);
         return;
@@ -665,7 +693,30 @@
       });
 
       sizeLine.append(cap, sizeInput, sizeVal, makeDelete(idx));
-      row.append(textInput, sizeLine);
+
+      // Per-line font weight slider (100 Thin … 900 Black).
+      const wLine = document.createElement("div");
+      wLine.className = "size-line";
+      const wCap = document.createElement("span");
+      wCap.className = "cap";
+      wCap.textContent = "Weight";
+      const wInput = document.createElement("input");
+      wInput.type = "range"; wInput.className = "tl-size";
+      wInput.min = "100"; wInput.max = "900"; wInput.step = "100";
+      wInput.value = line.weight || state.weight;
+      const wVal = document.createElement("span");
+      wVal.className = "tl-size-val";
+      wVal.style.width = "64px";
+      wVal.textContent = WEIGHT_NAMES[line.weight || state.weight];
+      wInput.addEventListener("input", e => {
+        const v = Number(e.target.value);
+        state.textLines[idx].weight = v;
+        wVal.textContent = WEIGHT_NAMES[v];
+        render();
+      });
+      wLine.append(wCap, wInput, wVal);
+
+      row.append(textInput, sizeLine, wLine);
       els.textLines.appendChild(row);
     });
   }
@@ -710,9 +761,9 @@
     render();
   });
 
-  els.weight.addEventListener("input", e => {
-    state.weight = Number(e.target.value);
-    els.weightVal.textContent = WEIGHT_NAMES[state.weight] || state.weight;
+  els.textGap.addEventListener("input", e => {
+    state.textGap = Number(e.target.value);
+    els.textGapVal.textContent = state.textGap;
     render();
   });
 
@@ -729,13 +780,13 @@
   });
 
   els.addLine.addEventListener("click", () => {
-    state.textLines.push({ type: "text", text: "", size: 60 });
+    state.textLines.push({ type: "text", text: "", size: 60, weight: state.weight });
     rebuildTextRows();
     render();
   });
 
   els.addRule.addEventListener("click", () => {
-    state.textLines.push({ type: "line" });
+    state.textLines.push({ type: "line", thickness: null });
     rebuildTextRows();
     render();
   });
