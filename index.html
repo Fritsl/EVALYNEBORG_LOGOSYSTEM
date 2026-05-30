@@ -233,6 +233,22 @@
   }
   .frame svg { width: 100%; height: auto; display: block; }
   .loading { color: var(--panel-muted); font-size: 14px; padding: 40px; display:block; }
+
+  /* ---- Popped-out layout: preview is in its own window, so the main window
+         becomes a full-width control surface laid out in neat columns. ---- */
+  body.popped { grid-template-columns: 1fr; }
+  body.popped .stage { display: none; }
+  body.popped .panel {
+    border-right: none;
+    padding: 28px 36px;
+    column-width: 300px;
+    column-gap: 28px;
+  }
+  /* keep each control/pane intact within a column */
+  body.popped .panel > * { break-inside: avoid; }
+  /* title spans the full width above the columns */
+  body.popped .panel h1,
+  body.popped .panel .sub { column-span: all; }
 </style>
 </head>
 <body>
