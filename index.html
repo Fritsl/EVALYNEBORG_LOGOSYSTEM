@@ -233,7 +233,10 @@
     <div class="control">
       <span class="section-label">Text lines (fill logo width)</span>
       <div id="textLines"></div>
-      <button class="add-line" id="addLine">+ Add line</button>
+      <div class="actions" style="margin-top:4px">
+        <button class="add-line" id="addLine" style="margin-top:0">+ Add text</button>
+        <button class="add-line" id="addRule" style="margin-top:0">+ Add line</button>
+      </div>
       <div class="checkbox-row">
         <input type="checkbox" id="freeSize" />
         <label for="freeSize">Free size (step 1, otherwise 10)</label>
@@ -266,7 +269,9 @@
     weight: 500,
     lineSpacing: 30,
     freeSize: false,
-    textLines: [ { text: "EVA LYNEBORG", size: 70 } ],
+    // Each item is either { type:"text", text, size } or { type:"line" } (a
+    // horizontal rule with the same thickness as the logo frame).
+    textLines: [ { type: "text", text: "EVA LYNEBORG", size: 70 } ],
   };
   // Settings restored by "Reset" (everything visual except the text content).
   const RESET_KEYS = ["fill", "bg", "heightRegulator", "weight", "lineSpacing"];
@@ -296,6 +301,7 @@
     freeSize: document.getElementById("freeSize"),
     textLines: document.getElementById("textLines"),
     addLine:  document.getElementById("addLine"),
+    addRule:  document.getElementById("addRule"),
     swap:     document.getElementById("swap"),
     reset:    document.getElementById("reset"),
     setupSelect: document.getElementById("setupSelect"),
@@ -338,6 +344,12 @@
     if (!Array.isArray(next.textLines) || next.textLines.length === 0) {
       next.textLines = structuredClone(DEFAULTS.textLines);
     }
+    // Normalize items (older saves had no `type` — treat those as text).
+    next.textLines = next.textLines.map(l =>
+      l && l.type === "line"
+        ? { type: "line" }
+        : { type: "text", text: (l && l.text) || "", size: (l && l.size) || 60 }
+    );
     state = next;
   }
 
@@ -384,7 +396,15 @@
       baseViewBox = { x: vb[0], y: vb[1], w: vb[2], h: vb[3] };
 
       const fb = framePath.getBBox();
-      frameMetrics = { left: fb.x, width: fb.width, bottom: fb.y + fb.height };
+      // Frame border thickness = inner-left edge − outer-left edge. Measured
+      // from the path so an "Add line" rule always matches the frame exactly.
+      const xs = frameOrigD.match(/-?\d*\.?\d+/g).map(Number).filter((_, i) => i % 2 === 0);
+      const outerLeft = Math.min(...xs);
+      const innerLeft = Math.min(...xs.filter(x => x > outerLeft + 2));
+      frameMetrics = {
+        left: fb.x, width: fb.width, bottom: fb.y + fb.height,
+        thickness: innerLeft - outerLeft,
+      };
 
       bgRect = document.createElementNS(SVGNS, "rect");
       svgEl.insertBefore(bgRect, svgEl.firstChild);
@@ -418,10 +438,24 @@
     const frameRight = frameMetrics.left + frameMetrics.width;
 
     state.textLines.forEach((line, i) => {
-      const size = line.size;
-      const content = (line.text || "").toUpperCase();
       const gap = (i === 0) ? TEXT_TOP_GAP : state.lineSpacing;
       const targetInkTop = prevInkBottom + gap;
+
+      // Horizontal rule — same thickness as the logo frame, full frame width.
+      if (line.type === "line") {
+        const r = document.createElementNS(SVGNS, "rect");
+        r.setAttribute("x", frameMetrics.left);
+        r.setAttribute("y", targetInkTop);
+        r.setAttribute("width", frameMetrics.width);
+        r.setAttribute("height", frameMetrics.thickness);
+        r.setAttribute("fill", state.fill);
+        textGroup.appendChild(r);
+        prevInkBottom = targetInkTop + frameMetrics.thickness;
+        return;
+      }
+
+      const size = line.size;
+      const content = (line.text || "").toUpperCase();
 
       if (!content.length) {
         prevInkBottom = targetInkTop + size * CAP_RATIO;
@@ -513,9 +547,38 @@
     els.textLines.innerHTML = "";
     const step = state.freeSize ? 1 : 10;
 
+    const makeDelete = (idx) => {
+      const del = document.createElement("button");
+      del.className = "tl-del";
+      del.title = "Delete";
+      del.textContent = "×";
+      del.addEventListener("click", () => {
+        state.textLines.splice(idx, 1);
+        if (state.textLines.length === 0)
+          state.textLines.push({ type: "text", text: "", size: 60 });
+        rebuildTextRows();
+        render();
+      });
+      return del;
+    };
+
     state.textLines.forEach((line, idx) => {
       const row = document.createElement("div");
       row.className = "text-row";
+
+      // Rule row — just a label and a delete button (thickness is fixed).
+      if (line.type === "line") {
+        const ruleLine = document.createElement("div");
+        ruleLine.className = "size-line";
+        const cap = document.createElement("span");
+        cap.className = "cap";
+        cap.style.flex = "1";
+        cap.textContent = "— Line (frame thickness)";
+        ruleLine.append(cap, makeDelete(idx));
+        row.append(ruleLine);
+        els.textLines.appendChild(row);
+        return;
+      }
 
       const textInput = document.createElement("input");
       textInput.type = "text";
@@ -552,18 +615,7 @@
         render();
       });
 
-      const del = document.createElement("button");
-      del.className = "tl-del";
-      del.title = "Delete line";
-      del.textContent = "×";
-      del.addEventListener("click", () => {
-        state.textLines.splice(idx, 1);
-        if (state.textLines.length === 0) state.textLines.push({ text: "", size: 60 });
-        rebuildTextRows();
-        render();
-      });
-
-      sizeLine.append(cap, sizeInput, sizeVal, del);
+      sizeLine.append(cap, sizeInput, sizeVal, makeDelete(idx));
       row.append(textInput, sizeLine);
       els.textLines.appendChild(row);
     });
@@ -622,7 +674,13 @@
   });
 
   els.addLine.addEventListener("click", () => {
-    state.textLines.push({ text: "", size: 60 });
+    state.textLines.push({ type: "text", text: "", size: 60 });
+    rebuildTextRows();
+    render();
+  });
+
+  els.addRule.addEventListener("click", () => {
+    state.textLines.push({ type: "line" });
     rebuildTextRows();
     render();
   });
