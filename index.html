@@ -116,6 +116,24 @@
   }
   .setup-row button { white-space: nowrap; }
 
+  /* ---- Collapsible pane (general settings) ---- */
+  .pane {
+    margin-bottom: 24px;
+    border: 1px solid var(--panel-border);
+    border-radius: 8px;
+    overflow: hidden;
+  }
+  .pane-head {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 11px 12px; background: #1f1f1f; cursor: pointer; user-select: none;
+  }
+  .pane-head .section-label { margin: 0; }
+  .pane-head .chev { color: var(--panel-muted); font-size: 11px; transition: transform 0.12s ease; }
+  .pane.collapsed .chev { transform: rotate(-90deg); }
+  .pane-body { padding: 16px 12px 0; }
+  .pane.collapsed .pane-body { display: none; }
+  .pane-body .control:last-child { margin-bottom: 16px; }
+
   /* ---- Text lines ---- */
   .text-row {
     border: 1px solid var(--panel-border);
@@ -319,7 +337,9 @@
     weight: 500,            // default weight applied to newly added text lines
     lineSpacing: 30,
     textGap: 48,            // gap between the logo and the text block
+    outerMargin: 0,         // extra background frame around the whole composition
     freeSize: false,
+    generalCollapsed: false,// UI: is the "General settings" pane folded?
     // Each item is either:
     //   { type:"text", text, size, weight }              a text line
     //   { type:"line", thickness }                       a horizontal rule
@@ -327,7 +347,7 @@
     textLines: [ { type: "text", text: "EVA LYNEBORG", size: 70, weight: 500 } ],
   };
   // Settings restored by "Reset" (everything visual except the text content).
-  const RESET_KEYS = ["fill", "bg", "heightRegulator", "weight", "lineSpacing", "textGap"];
+  const RESET_KEYS = ["fill", "bg", "heightRegulator", "weight", "lineSpacing", "textGap", "outerMargin"];
 
   let state = structuredClone(DEFAULTS);
 
@@ -497,19 +517,23 @@
   // Lay the text/line items into a column [left, left+width], with the first
   // item's ink top starting at `startTop` and equal `lineSpacing` between
   // items. Each text line's ink is stretched to span the column width exactly.
-  // Returns the Y of the last ink bottom.
-  function layoutText(left, width, startTop) {
+  // `scale` multiplies sizes, thicknesses and gaps (used by side mode to make
+  // the whole text block exactly as tall as the logo). Returns the last ink
+  // bottom Y.
+  function layoutText(left, width, startTop, scale = 1) {
     while (textGroup.firstChild) textGroup.removeChild(textGroup.firstChild);
 
     const right = left + width;
+    const gapBetween = state.lineSpacing * scale;
     let prevInkBottom = startTop;
 
     state.textLines.forEach((line, i) => {
-      const targetInkTop = (i === 0) ? startTop : prevInkBottom + state.lineSpacing;
+      const targetInkTop = (i === 0) ? startTop : prevInkBottom + gapBetween;
 
       // Horizontal rule — adjustable thickness (defaults to frame thickness).
       if (line.type === "line") {
-        const th = (line.thickness == null) ? frameMetrics.thickness : line.thickness;
+        const base = (line.thickness == null) ? frameMetrics.thickness : line.thickness;
+        const th = base * scale;
         const r = document.createElementNS(SVGNS, "rect");
         r.setAttribute("x", left);
         r.setAttribute("y", targetInkTop);
@@ -521,7 +545,7 @@
         return;
       }
 
-      const size = line.size;
+      const size = line.size * scale;
       const content = (line.text || "").toUpperCase();
 
       if (!content.length) {
@@ -579,22 +603,24 @@
     let minX, minY, maxX, maxY;
 
     if (state.mode === "side") {
-      // Text column to the RIGHT of the logo, vertically centred on the logo.
+      // Text column to the RIGHT of the logo. The whole text+graphics block is
+      // scaled so its total height matches the logo's height exactly.
       const colLeft  = frameRight + state.textGap;
       const colWidth = frameMetrics.width;            // same width as the logo
+      const regionTop    = barTop;
+      const regionHeight = frameMetrics.bottom - regionTop;
 
-      // Pass 1: lay out at top 0 to measure total text height.
-      const h = layoutText(colLeft, colWidth, 0);
-      const regionTop = barTop, regionBottom = frameMetrics.bottom;
-      const desiredTop = regionTop + (regionBottom - regionTop - h) / 2;
+      // Pass 1: natural (unscaled) height from top 0.
+      const naturalH = layoutText(colLeft, colWidth, 0, 1) - 0;
+      const scale = (naturalH > 0) ? regionHeight / naturalH : 1;
 
-      // Pass 2: lay out at the centred top.
-      layoutText(colLeft, colWidth, desiredTop);
+      // Pass 2: scaled to fill the logo height, aligned to the logo top.
+      layoutText(colLeft, colWidth, regionTop, scale);
 
       minX = baseViewBox.x;
       maxX = colLeft + colWidth + SIDE_PAD;
-      minY = Math.min(baseViewBox.y, barTop - 15, desiredTop - SIDE_PAD);
-      maxY = Math.max(baseBottom, desiredTop + h + SIDE_PAD);
+      minY = Math.min(baseViewBox.y, barTop - 15);
+      maxY = baseBottom;
     } else {
       // Text BELOW the logo (default).
       const textBottom = layoutText(frameMetrics.left, frameMetrics.width,
@@ -604,6 +630,10 @@
       minY = Math.min(baseViewBox.y, barTop - 15);
       maxY = Math.max(baseBottom, textBottom + BOTTOM_PAD);
     }
+
+    // Outer frame: uniform background margin around the whole composition.
+    const m = state.outerMargin || 0;
+    minX -= m; minY -= m; maxX += m; maxY += m;
 
     svgEl.setAttribute("viewBox", `${minX} ${minY} ${maxX - minX} ${maxY - minY}`);
     bgRect.setAttribute("x", minX);
@@ -632,7 +662,10 @@
     els.textGapVal.textContent = state.textGap;
     els.lineSpacing.value = state.lineSpacing;
     els.lineSpacingVal.textContent = state.lineSpacing;
+    els.outerMargin.value = state.outerMargin;
+    els.outerMarginVal.textContent = state.outerMargin;
     els.freeSize.checked = !!state.freeSize;
+    els.generalPane.classList.toggle("collapsed", !!state.generalCollapsed);
   }
 
   // Wider preview frame in side mode so the tall+wide artwork has room.
@@ -853,6 +886,18 @@
     state.textGap = Number(e.target.value);
     els.textGapVal.textContent = state.textGap;
     render();
+  });
+
+  els.outerMargin.addEventListener("input", e => {
+    state.outerMargin = Number(e.target.value);
+    els.outerMarginVal.textContent = state.outerMargin;
+    render();
+  });
+
+  els.generalPaneHead.addEventListener("click", () => {
+    state.generalCollapsed = !state.generalCollapsed;
+    els.generalPane.classList.toggle("collapsed", state.generalCollapsed);
+    persistLast();
   });
 
   els.lineSpacing.addEventListener("input", e => {
