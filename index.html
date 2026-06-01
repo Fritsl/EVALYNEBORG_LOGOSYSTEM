@@ -1429,11 +1429,14 @@
   function symbolPath(ch, cx, cy, R) {
     if (ch === "★" || ch === "☆") {
       const r = R * 0.42;
+      // A 5-point star's bounding-box center sits above its visual center; drop
+      // the geometry by ~6% of R so the star reads as centered on the cap band.
+      const yc = cy + R * 0.06;
       let d = "";
       for (let k = 0; k < 10; k++) {
         const ang = -Math.PI / 2 + k * Math.PI / 5;
         const rad = (k % 2 === 0) ? R : r;
-        const px = cx + Math.cos(ang) * rad, py = cy + Math.sin(ang) * rad;
+        const px = cx + Math.cos(ang) * rad, py = yc + Math.sin(ang) * rad;
         d += (k === 0 ? "M" : "L") + px.toFixed(2) + " " + py.toFixed(2);
       }
       d += "Z";
@@ -1479,19 +1482,21 @@
         const font = await getOutfitFont(info.w);
 
         if (SYMBOLS.includes(ch)) {
-          // Align the symbol to the LETTER cap band: center it vertically at
-          // (baseline − capHeight/2) — the center of a capital "O" — and
-          // horizontally in the middle of this char's advance slot.
-          const os = font.tables && font.tables.os2;
-          const capH = ((os && os.sCapHeight) ? os.sCapHeight : font.unitsPerEm * 0.7)
-                       / font.unitsPerEm * fontSize;
+          // Match the symbol to the OUTLINED CAP band so it lines up with the
+          // real letter paths in the SVG: measure the actual "H" glyph outline
+          // (this weight, this size) for the true ink top/bottom around the
+          // baseline, center the symbol on that band, and size it to the cap.
+          const capRef = font.charToGlyph("H").getPath(0, pos.y, fontSize).getBoundingBox();
+          const capTop = capRef.y1, capBot = capRef.y2;       // SVG y-down
+          const capH = capBot - capTop;
           const cx = pos.x + ext.width / 2;
-          const cy = pos.y - capH / 2;               // pos.y is the baseline
-          const R = capH / 2;
+          const cy = (capTop + capBot) / 2;
+          const R = capH * 0.5 * 0.97;                         // ~cap height, matches PNG
           const sym = symbolPath(ch, cx, cy, R);
           const p = document.createElementNS(SVGNS, "path");
           p.setAttribute("d", sym.d);
           if (sym.outline) { p.setAttribute("fill", "none"); p.setAttribute("stroke", fill); p.setAttribute("stroke-width", (R*0.16).toFixed(2)); }
+          p.dataset.sym = "1";                                 // mark: exclude from bbox-align
           group.appendChild(p);
           continue;
         }
