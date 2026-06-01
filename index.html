@@ -444,6 +444,11 @@
 
     <div class="control">
       <span class="section-label">Text lines (fill logo width)</span>
+      <div class="export-note" style="margin:-2px 0 10px;">
+        Inline codes: <b>[*]</b>=★ &nbsp; <b>[.]</b>=● &nbsp;
+        <b>[+]</b>/<b>[-]</b> = shift weight of following text (repeat for more).
+        e.g. <code>[*] EVA [+]LYNEBORG[-] [.]</code>
+      </div>
       <div id="textLines"></div>
       <div class="actions" style="margin-top:4px">
         <button class="add-line" id="addLine" style="margin-top:0">+ Add text</button>
@@ -743,6 +748,39 @@
       console.error(err);
     });
 
+  // Inline codes inside a text line:
+  //   [*] → ★ (5-point star)   [.] → ● (dot)
+  //   [+] / [-] → shift the weight of the FOLLOWING text one step (repeatable)
+  // Returns an array of runs: { text, weight }. baseWeight is the line weight.
+  const WEIGHT_STEPS = [100, 200, 300, 400, 500, 600, 700, 800, 900];
+  function stepWeight(w, dir) {
+    let i = WEIGHT_STEPS.indexOf(w);
+    if (i < 0) i = WEIGHT_STEPS.indexOf(Math.round(w / 100) * 100);
+    if (i < 0) i = 4;
+    i = Math.max(0, Math.min(WEIGHT_STEPS.length - 1, i + dir));
+    return WEIGHT_STEPS[i];
+  }
+  function parseRuns(raw, baseWeight) {
+    const runs = [];
+    let weight = baseWeight, cur = "", i = 0;
+    const flush = () => { if (cur) { runs.push({ text: cur, weight }); cur = ""; } };
+    while (i < raw.length) {
+      if (raw[i] === "[") {
+        const close = raw.indexOf("]", i);
+        if (close > i) {
+          const code = raw.slice(i + 1, close);
+          if (code === "*") { cur += "★"; i = close + 1; continue; }
+          if (code === ".") { cur += "●"; i = close + 1; continue; }
+          if (code === "+") { flush(); weight = stepWeight(weight, +1); i = close + 1; continue; }
+          if (code === "-") { flush(); weight = stepWeight(weight, -1); i = close + 1; continue; }
+        }
+      }
+      cur += raw[i]; i++;
+    }
+    flush();
+    return runs;
+  }
+
   // Lay the text/line items into a column [left, left+width], with the first
   // item's ink top starting at `startTop` and equal `lineSpacing` between
   // items. Each text line's ink is stretched to span the column width exactly.
@@ -775,7 +813,9 @@
       }
 
       const size = line.size * scale;
-      const content = (line.text || "").toUpperCase();
+      const baseWeight = line.weight || state.weight;
+      const runs = parseRuns(line.text || "", baseWeight);
+      const content = runs.map(r => r.text).join("");
 
       if (!content.length) {
         prevInkBottom = targetInkTop + size * CAP_RATIO;
@@ -788,11 +828,18 @@
       t.setAttribute("textLength", width);
       t.setAttribute("lengthAdjust", "spacing");
       t.setAttribute("font-family", "Outfit, Arial, sans-serif");
-      t.setAttribute("font-weight", line.weight || state.weight);
+      t.setAttribute("font-weight", baseWeight);
       t.setAttribute("font-size", size);
       t.setAttribute("dominant-baseline", "hanging");
       t.setAttribute("fill", state.fill);
-      t.textContent = content;
+      // One <tspan> per run so per-run weight shifts work while textLength on
+      // the parent still stretches the whole line to the column width.
+      runs.forEach(r => {
+        const ts = document.createElementNS(SVGNS, "tspan");
+        ts.setAttribute("font-weight", r.weight);
+        ts.textContent = r.text.toUpperCase();
+        t.appendChild(ts);
+      });
       textGroup.appendChild(t);
 
       // Measure. If the SVG is not currently measurable (e.g. in a hidden
@@ -1287,7 +1334,13 @@
   async function getEmbeddedFontCSS() {
     if (fontCSSCache !== null) return fontCSSCache;
     const weights = new Set([state.weight]);
-    state.textLines.forEach(l => { if (l.type === "text") weights.add(l.weight || state.weight); });
+    state.textLines.forEach(l => {
+      if (l.type !== "text") return;
+      const bw = l.weight || state.weight;
+      weights.add(bw);
+      // include any weights produced by inline [+]/[-] shifts
+      parseRuns(l.text || "", bw).forEach(r => weights.add(r.weight));
+    });
     const list = [...weights].sort((a, b) => a - b).join(";");
     const cssUrl = `https://fonts.googleapis.com/css2?family=Outfit:wght@${list}&display=swap`;
     try {
