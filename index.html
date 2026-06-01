@@ -445,9 +445,9 @@
     <div class="control">
       <span class="section-label">Text lines (fill logo width)</span>
       <div class="export-note" style="margin:-2px 0 10px;">
-        Inline codes: <b>[*]</b>=★ &nbsp; <b>[.]</b>=● &nbsp;
+        Inline codes: <b>[*]</b>=★ <b>[*o]</b>=☆ &nbsp; <b>[.]</b>=● <b>[.o]</b>=○ &nbsp;
         <b>[+]</b>/<b>[-]</b> = shift weight of following text (repeat for more).
-        e.g. <code>[*] EVA [+]LYNEBORG[-] [.]</code>
+        e.g. <code>[*o] EVA [+]LYNEBORG[-] [.]</code>
       </div>
       <div id="textLines"></div>
       <div class="actions" style="margin-top:4px">
@@ -749,7 +749,7 @@
     });
 
   // Inline codes inside a text line:
-  //   [*] → ★ (5-point star)   [.] → ● (dot)
+  //   [*] → ★ filled / [*o] → ☆ outline   [.] → ● filled / [.o] → ○ outline
   //   [+] / [-] → shift the weight of the FOLLOWING text one step (repeatable)
   // Returns an array of runs: { text, weight }. baseWeight is the line weight.
   const WEIGHT_STEPS = [100, 200, 300, 400, 500, 600, 700, 800, 900];
@@ -769,8 +769,10 @@
         const close = raw.indexOf("]", i);
         if (close > i) {
           const code = raw.slice(i + 1, close);
-          if (code === "*") { cur += "★"; i = close + 1; continue; }
-          if (code === ".") { cur += "●"; i = close + 1; continue; }
+          if (code === "*")  { cur += "★"; i = close + 1; continue; }  // filled star
+          if (code === "*o") { cur += "☆"; i = close + 1; continue; }  // outline star
+          if (code === ".")  { cur += "●"; i = close + 1; continue; }  // filled dot
+          if (code === ".o") { cur += "○"; i = close + 1; continue; }  // outline dot
           if (code === "+") { flush(); weight = stepWeight(weight, +1); i = close + 1; continue; }
           if (code === "-") { flush(); weight = stepWeight(weight, -1); i = close + 1; continue; }
         }
