@@ -161,6 +161,48 @@
   .tile-name .badge { color: #6a6; font-size: 10px; text-transform: uppercase; letter-spacing: .06em; }
   .gallery-empty { color: var(--panel-muted); font-size: 14px; padding: 40px; }
 
+  /* ---- Projection overlay (try the logo on a backdrop / mockup) ---- */
+  .proj { position: fixed; inset: 0; z-index: 1000; background: #0b0b0b; display: none; flex-direction: column; }
+  .proj.open { display: flex; }
+  .proj-head {
+    display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+    padding: 12px 20px; border-bottom: 1px solid var(--panel-border);
+  }
+  .proj-head h2 { margin: 0; font-size: 14px; letter-spacing: 0.08em; text-transform: uppercase; font-weight: 600; }
+  .proj-head .grp { display: flex; align-items: center; gap: 8px; }
+  .proj-head label { font-size: 11px; color: var(--panel-muted); text-transform: uppercase; letter-spacing: .05em; }
+  .proj-head input[type="range"] { width: 120px; }
+  .proj-head button, .proj-head .filebtn {
+    background: #262626; color: var(--panel-fg); border: 1px solid var(--panel-border);
+    border-radius: 8px; padding: 7px 13px; font-size: 12px; cursor: pointer;
+  }
+  .proj-head button:hover, .proj-head .filebtn:hover { background: #303030; }
+  .proj-head .spacer { flex: 1; }
+  .proj-thumbs { display: flex; gap: 8px; }
+  .proj-thumb {
+    width: 46px; height: 46px; border-radius: 7px; border: 1px solid var(--panel-border);
+    background-size: cover; background-position: center; cursor: pointer; padding: 0;
+  }
+  .proj-thumb:hover, .proj-thumb.sel { border-color: var(--accent); }
+  .proj-stage {
+    flex: 1; position: relative; overflow: hidden;
+    display: flex; align-items: center; justify-content: center;
+    background: #111 repeating-conic-gradient(#1a1a1a 0% 25%, #141414 0% 50%) 0/28px 28px;
+  }
+  .proj-canvas { position: relative; max-width: 100%; max-height: 100%; }
+  .proj-canvas img.backdrop { display: block; max-width: 100%; max-height: 100%; user-select: none; -webkit-user-drag: none; }
+  .proj-overlay { position: absolute; inset: 0; }   /* holds the transformed logo + handles */
+  .proj-logo { position: absolute; left: 0; top: 0; transform-origin: 0 0; will-change: transform; }
+  .proj-logo svg { display: block; width: 100%; height: 100%; }
+  .proj-handle {
+    position: absolute; width: 16px; height: 16px; margin: -8px 0 0 -8px;
+    border-radius: 50%; background: var(--accent); border: 2px solid #fff;
+    cursor: grab; box-shadow: 0 0 0 1px rgba(0,0,0,.5);
+  }
+  .proj-handle.move { border-radius: 4px; background: #fff; }
+  .proj-handle.rot  { background: #6a6; }
+  .proj-empty { color: var(--panel-muted); font-size: 14px; }
+
   /* ---- Saved setups ---- */
   .setup-row { display: flex; gap: 8px; margin-bottom: 8px; }
   .setup-row select, .setup-row input {
@@ -466,6 +508,7 @@
     <div class="control">
       <button class="add-line" id="reset" style="margin-top:0">Reset</button>
       <button class="add-line" id="popout" style="margin-top:10px">⧉ Pop out preview (2nd monitor)</button>
+      <button class="add-line" id="openProjection" style="margin-top:6px">🖼 Project onto backdrop…</button>
     </div>
   </aside>
 
@@ -481,6 +524,34 @@
       <button class="gallery-close" id="galleryClose">Close ✕</button>
     </div>
     <div class="gallery-grid" id="galleryGrid"></div>
+  </div>
+
+  <div class="proj" id="proj">
+    <div class="proj-head">
+      <h2>Projection</h2>
+      <div class="proj-thumbs" id="projThumbs"></div>
+      <label class="filebtn">Upload…<input type="file" id="projUpload" accept="image/*" hidden></label>
+      <div class="grp"><label>Scale</label><input type="range" id="projScale" min="5" max="200" value="40"></div>
+      <div class="grp"><label>Rotate</label><input type="range" id="projRotate" min="-180" max="180" value="0"></div>
+      <button id="projResetXform">Reset placement</button>
+      <div class="spacer"></div>
+      <button id="projClose">Close ✕</button>
+    </div>
+    <div class="proj-stage" id="projStage">
+      <div class="proj-canvas" id="projCanvas">
+        <img class="backdrop" id="projBackdrop" alt="">
+        <div class="proj-overlay" id="projOverlay">
+          <div class="proj-logo" id="projLogo"></div>
+          <div class="proj-handle" data-h="0" title="Top-left"></div>
+          <div class="proj-handle" data-h="1" title="Top-right"></div>
+          <div class="proj-handle" data-h="2" title="Bottom-right"></div>
+          <div class="proj-handle" data-h="3" title="Bottom-left"></div>
+          <div class="proj-handle move" data-h="move" title="Move"></div>
+          <div class="proj-handle rot"  data-h="rot"  title="Rotate"></div>
+        </div>
+      </div>
+      <div class="proj-empty" id="projEmpty">Choose a backdrop above (built-in thumbnail or Upload) to begin.</div>
+    </div>
   </div>
 
 <script>
@@ -550,6 +621,7 @@
     swap:     document.getElementById("swap"),
     reset:    document.getElementById("reset"),
     popout:   document.getElementById("popout"),
+    openProjection: document.getElementById("openProjection"),
     openGallery:  document.getElementById("openGallery"),
     gallery:      document.getElementById("gallery"),
     galleryGrid:  document.getElementById("galleryGrid"),
@@ -1504,7 +1576,253 @@
   els.openGallery.addEventListener("click", openGallery);
   els.galleryClose.addEventListener("click", closeGallery);
   els.gallery.addEventListener("click", e => { if (e.target === els.gallery) closeGallery(); });
-  document.addEventListener("keydown", e => { if (e.key === "Escape") closeGallery(); });
+
+  /* =========================================================================
+     PROJECTION  (composite the logo onto a backdrop image; move / scale /
+     rotate, plus a 4-corner perspective warp via homography → matrix3d).
+     The logo's background is forced transparent here.
+     ========================================================================= */
+  const pj = {
+    el: {
+      root: document.getElementById("proj"),
+      thumbs: document.getElementById("projThumbs"),
+      upload: document.getElementById("projUpload"),
+      scale: document.getElementById("projScale"),
+      rotate: document.getElementById("projRotate"),
+      resetXform: document.getElementById("projResetXform"),
+      close: document.getElementById("projClose"),
+      stage: document.getElementById("projStage"),
+      canvas: document.getElementById("projCanvas"),
+      backdrop: document.getElementById("projBackdrop"),
+      overlay: document.getElementById("projOverlay"),
+      logo: document.getElementById("projLogo"),
+      empty: document.getElementById("projEmpty"),
+      handles: [...document.querySelectorAll("#projOverlay .proj-handle")],
+    },
+    w: 0, h: 0,          // logo's natural box size (in overlay px) before warp
+    corners: null,       // [[x,y]*4] destination quad in overlay px (TL,TR,BR,BL)
+    hasBackdrop: false,
+  };
+
+  // ---- Built-in mockups: lightweight inline SVG surfaces (no binary assets) -
+  function mockup(label, inner, bg = "#d8d8d8") {
+    const svg = `<svg xmlns='http://www.w3.org/2000/svg' width='900' height='900'>
+      <rect width='900' height='900' fill='${bg}'/>${inner}
+      <text x='450' y='865' font-family='sans-serif' font-size='26' fill='#888' text-anchor='middle'>${label}</text></svg>`;
+    return "data:image/svg+xml;utf8," + encodeURIComponent(svg);
+  }
+  const MOCKUPS = [
+    { name: "T-shirt", url: mockup("T-SHIRT",
+      `<path d='M250 150 L360 110 Q450 170 540 110 L650 150 L720 260 L640 320 L640 760 L260 760 L260 320 L180 260 Z' fill='#f4f4f4' stroke='#cfcfcf' stroke-width='3'/>`,
+      "#cdd3d8") },
+    { name: "Shop window", url: mockup("SHOP WINDOW",
+      `<rect x='120' y='120' width='660' height='560' fill='#1d2733' stroke='#0d141c' stroke-width='14'/>
+       <rect x='150' y='150' width='600' height='500' fill='#26333f'/>
+       <line x1='450' y1='120' x2='450' y2='680' stroke='#0d141c' stroke-width='8'/>`,
+      "#b9bfc4") },
+    { name: "Jar label", url: mockup("JAR",
+      `<rect x='300' y='120' width='300' height='110' rx='16' fill='#caa46a'/>
+       <rect x='280' y='230' width='340' height='520' rx='34' fill='#e9d9bd' stroke='#c9b48d' stroke-width='3'/>
+       <rect x='305' y='330' width='290' height='330' rx='10' fill='#fbf6ec'/>`,
+      "#cfc6b6") },
+    { name: "Box face", url: mockup("BOX",
+      `<path d='M200 250 L620 210 L740 300 L740 720 L320 760 L200 670 Z' fill='#efe7d8' stroke='#cbbfa8' stroke-width='3'/>`,
+      "#c7ccd0") },
+  ];
+
+  // ---- Homography: map unit square (0..1) corners to the 4 dest points, then
+  // emit a CSS matrix3d. Standard square→quad projective transform.
+  function generalProjection(src, dst) {
+    // solve for the 8 homography params mapping src[i] -> dst[i]
+    const A = [], b = [];
+    for (let i = 0; i < 4; i++) {
+      const [x, y] = src[i], [X, Y] = dst[i];
+      A.push([x, y, 1, 0, 0, 0, -X * x, -X * y]); b.push(X);
+      A.push([0, 0, 0, x, y, 1, -Y * x, -Y * y]); b.push(Y);
+    }
+    const h = solve8(A, b);
+    // CSS matrix3d is column-major; rows correspond to the 2D homography.
+    return [
+      h[0], h[3], 0, h[6],
+      h[1], h[4], 0, h[7],
+      0,    0,    1, 0,
+      h[2], h[5], 0, 1,
+    ];
+  }
+  // Gaussian elimination for an 8x8 system.
+  function solve8(A, b) {
+    const n = 8, M = A.map((r, i) => [...r, b[i]]);
+    for (let col = 0; col < n; col++) {
+      let piv = col;
+      for (let r = col + 1; r < n; r++) if (Math.abs(M[r][col]) > Math.abs(M[piv][col])) piv = r;
+      [M[col], M[piv]] = [M[piv], M[col]];
+      const d = M[col][col] || 1e-9;
+      for (let c = col; c <= n; c++) M[col][c] /= d;
+      for (let r = 0; r < n; r++) {
+        if (r === col) continue;
+        const f = M[r][col];
+        for (let c = col; c <= n; c++) M[r][c] -= f * M[col][c];
+      }
+    }
+    return M.map(r => r[n]);
+  }
+
+  function applyWarp() {
+    if (!pj.corners) return;
+    const src = [[0,0],[pj.w,0],[pj.w,pj.h],[0,pj.h]];
+    const m = generalProjection(src, pj.corners);
+    pj.el.logo.style.width = pj.w + "px";
+    pj.el.logo.style.height = pj.h + "px";
+    pj.el.logo.style.transform = "matrix3d(" + m.join(",") + ")";
+    // position handles at the dest corners
+    const names = { 0:0, 1:1, 2:2, 3:3 };
+    pj.el.handles.forEach(hEl => {
+      const k = hEl.dataset.h;
+      if (k in names) {
+        const [x,y] = pj.corners[names[k]];
+        hEl.style.left = x + "px"; hEl.style.top = y + "px";
+      } else if (k === "move") {
+        const cx = (pj.corners[0][0]+pj.corners[2][0])/2, cy = (pj.corners[0][1]+pj.corners[2][1])/2;
+        hEl.style.left = cx + "px"; hEl.style.top = cy + "px";
+      } else if (k === "rot") {
+        const mx = (pj.corners[0][0]+pj.corners[1][0])/2, my = (pj.corners[0][1]+pj.corners[1][1])/2;
+        const cx = (pj.corners[0][0]+pj.corners[2][0])/2, cy = (pj.corners[0][1]+pj.corners[2][1])/2;
+        const ux = mx-cx, uy = my-cy, len = Math.hypot(ux,uy)||1;
+        hEl.style.left = (mx + ux/len*28) + "px"; hEl.style.top = (my + uy/len*28) + "px";
+      }
+    });
+  }
+
+  // Build the axis-aligned quad from scale (% of backdrop width) + rotation,
+  // centered at a given point. Used by sliders and the initial placement.
+  function setQuadFromSliders(centerX, centerY) {
+    const oW = pj.el.overlay.clientWidth, oH = pj.el.overlay.clientHeight;
+    const scalePct = Number(pj.el.scale.value) / 100;
+    const drawW = oW * scalePct;
+    const drawH = drawW * (pj.h / pj.w || 1);
+    const cx = centerX != null ? centerX : oW / 2;
+    const cy = centerY != null ? centerY : oH / 2;
+    const ang = Number(pj.el.rotate.value) * Math.PI / 180;
+    const cos = Math.cos(ang), sin = Math.sin(ang);
+    const pts = [[-drawW/2,-drawH/2],[drawW/2,-drawH/2],[drawW/2,drawH/2],[-drawW/2,drawH/2]];
+    pj.corners = pts.map(([x,y]) => [cx + x*cos - y*sin, cy + x*sin + y*cos]);
+    applyWarp();
+  }
+
+  function loadLogoIntoProjection() {
+    // Use the current composed logo with transparent background.
+    const clone = svgEl.cloneNode(true);
+    const vb = svgEl.getAttribute("viewBox").split(/[\s,]+/).map(Number);
+    const bg = clone.querySelector("rect"); if (bg) bg.remove();   // force transparent
+    clone.setAttribute("xmlns", SVGNS);
+    clone.setAttribute("preserveAspectRatio", "none");
+    clone.removeAttribute("width"); clone.removeAttribute("height");
+    pj.el.logo.innerHTML = clone.outerHTML;
+    // natural box: scale the logo's aspect to a default width of the overlay
+    const oW = pj.el.overlay.clientWidth || 600;
+    pj.w = oW * 0.4;
+    pj.h = pj.w * (vb[3] / vb[2]);
+  }
+
+  function setBackdrop(url, selThumbEl) {
+    pj.el.backdrop.onload = () => {
+      pj.hasBackdrop = true;
+      pj.el.empty.style.display = "none";
+      pj.el.overlay.style.display = "";
+      loadLogoIntoProjection();
+      setQuadFromSliders();   // center it
+    };
+    pj.el.backdrop.src = url;
+    pj.el.thumbs.querySelectorAll(".proj-thumb").forEach(t => t.classList.toggle("sel", t === selThumbEl));
+  }
+
+  function buildThumbs() {
+    pj.el.thumbs.innerHTML = "";
+    MOCKUPS.forEach(mk => {
+      const b = document.createElement("button");
+      b.className = "proj-thumb";
+      b.title = mk.name;
+      b.style.backgroundImage = `url("${mk.url}")`;
+      b.addEventListener("click", () => setBackdrop(mk.url, b));
+      pj.el.thumbs.appendChild(b);
+    });
+  }
+
+  // ---- dragging handles ----
+  function overlayPoint(ev) {
+    const r = pj.el.overlay.getBoundingClientRect();
+    const t = ev.touches ? ev.touches[0] : ev;
+    return [t.clientX - r.left, t.clientY - r.top];
+  }
+  let drag = null;
+  pj.el.handles.forEach(hEl => {
+    const start = (ev) => {
+      if (!pj.corners) return;
+      ev.preventDefault();
+      drag = { k: hEl.dataset.h, last: overlayPoint(ev), startCorners: pj.corners.map(c => c.slice()) };
+    };
+    hEl.addEventListener("mousedown", start);
+    hEl.addEventListener("touchstart", start, { passive: false });
+  });
+  function onMove(ev) {
+    if (!drag) return;
+    const p = overlayPoint(ev);
+    const dx = p[0] - drag.last[0], dy = p[1] - drag.last[1];
+    const k = drag.k;
+    if (k === "move") {
+      pj.corners = drag.startCorners.map(c => [c[0] + dx, c[1] + dy]);
+    } else if (k === "rot") {
+      const cx = (drag.startCorners[0][0]+drag.startCorners[2][0])/2;
+      const cy = (drag.startCorners[0][1]+drag.startCorners[2][1])/2;
+      const a0 = Math.atan2(drag.last[1]-cy, drag.last[0]-cx);
+      const a1 = Math.atan2(p[1]-cy, p[0]-cx);
+      const da = a1 - a0, cos = Math.cos(da), sin = Math.sin(da);
+      pj.corners = drag.startCorners.map(([x,y]) => {
+        const rx = x-cx, ry = y-cy;
+        return [cx + rx*cos - ry*sin, cy + rx*sin + ry*cos];
+      });
+    } else {
+      const i = Number(k);
+      pj.corners = drag.startCorners.map(c => c.slice());
+      pj.corners[i] = [drag.startCorners[i][0] + dx, drag.startCorners[i][1] + dy];
+    }
+    applyWarp();
+  }
+  window.addEventListener("mousemove", onMove);
+  window.addEventListener("touchmove", onMove, { passive: false });
+  window.addEventListener("mouseup", () => { drag = null; });
+  window.addEventListener("touchend", () => { drag = null; });
+
+  pj.el.scale.addEventListener("input", () => { if (pj.corners) { const c = quadCenter(); setQuadFromSliders(c[0], c[1]); } });
+  pj.el.rotate.addEventListener("input", () => { if (pj.corners) { const c = quadCenter(); setQuadFromSliders(c[0], c[1]); } });
+  function quadCenter() { return [(pj.corners[0][0]+pj.corners[2][0])/2, (pj.corners[0][1]+pj.corners[2][1])/2]; }
+
+  pj.el.resetXform.addEventListener("click", () => { pj.el.rotate.value = 0; pj.el.scale.value = 40; if (pj.hasBackdrop) { loadLogoIntoProjection(); setQuadFromSliders(); } });
+
+  pj.el.upload.addEventListener("change", e => {
+    const f = e.target.files && e.target.files[0];
+    if (!f) return;
+    const rd = new FileReader();
+    rd.onload = () => setBackdrop(rd.result, null);
+    rd.readAsDataURL(f);
+  });
+
+  function openProjection() {
+    buildThumbs();
+    pj.el.root.classList.add("open");
+    if (!pj.hasBackdrop) { pj.el.overlay.style.display = "none"; pj.el.empty.style.display = ""; }
+    else { loadLogoIntoProjection(); applyWarp(); }   // refresh logo to current design
+  }
+  function closeProjection() { pj.el.root.classList.remove("open"); }
+
+  els.openProjection.addEventListener("click", openProjection);
+  pj.el.close.addEventListener("click", closeProjection);
+
+  document.addEventListener("keydown", e => {
+    if (e.key !== "Escape") return;
+    closeGallery();
+    closeProjection();
+  });
 </script>
 </body>
 </html>
