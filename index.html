@@ -1422,11 +1422,13 @@
     return _fontByWeight[w];
   }
 
-  // Star / dot symbol path data, centred in a unit box, scaled to `s` (cap-ish
-  // height) at baseline-origin (x,yTop). Returns {d, filled}.
-  function symbolPath(ch, x, yTop, s) {
-    const cx = x + s / 2, cy = yTop + s / 2, R = s * 0.5, r = R * 0.42;
+  const SYMBOLS = "★☆●○";
+  // Star / dot symbol path, given an explicit center (cx,cy) and outer radius R.
+  // Centering the symbol on the cap-center makes it align with the letters
+  // (center of a capital "O"), not float up like an i-dot.
+  function symbolPath(ch, cx, cy, R) {
     if (ch === "★" || ch === "☆") {
+      const r = R * 0.42;
       let d = "";
       for (let k = 0; k < 10; k++) {
         const ang = -Math.PI / 2 + k * Math.PI / 5;
@@ -1438,8 +1440,7 @@
       return { d, outline: ch === "☆" };
     }
     if (ch === "●" || ch === "○") {
-      const rr = R * 0.8;
-      // circle as two arcs
+      const rr = R * 0.82;
       const d = `M${(cx-rr).toFixed(2)} ${cy.toFixed(2)}`
               + `a${rr.toFixed(2)} ${rr.toFixed(2)} 0 1 0 ${(rr*2).toFixed(2)} 0`
               + `a${rr.toFixed(2)} ${rr.toFixed(2)} 0 1 0 ${(-rr*2).toFixed(2)} 0Z`;
@@ -1475,26 +1476,30 @@
         if (ch === " ") continue;
         const pos = live.getStartPositionOfChar(i);   // baseline-left, stretched
         const ext = live.getExtentOfChar(i);          // includes per-char advance
-        const sym = symbolPath(ch, pos.x, pos.y - ext.height, ext.height);
-        if (sym) {
+        const font = await getOutfitFont(info.w);
+
+        if (SYMBOLS.includes(ch)) {
+          // Align the symbol to the LETTER cap band: center it vertically at
+          // (baseline − capHeight/2) — the center of a capital "O" — and
+          // horizontally in the middle of this char's advance slot.
+          const os = font.tables && font.tables.os2;
+          const capH = ((os && os.sCapHeight) ? os.sCapHeight : font.unitsPerEm * 0.7)
+                       / font.unitsPerEm * fontSize;
+          const cx = pos.x + ext.width / 2;
+          const cy = pos.y - capH / 2;               // pos.y is the baseline
+          const R = capH / 2;
+          const sym = symbolPath(ch, cx, cy, R);
           const p = document.createElementNS(SVGNS, "path");
           p.setAttribute("d", sym.d);
-          if (sym.outline) { p.setAttribute("fill", "none"); p.setAttribute("stroke", fill); p.setAttribute("stroke-width", (ext.height*0.08).toFixed(2)); }
+          if (sym.outline) { p.setAttribute("fill", "none"); p.setAttribute("stroke", fill); p.setAttribute("stroke-width", (R*0.16).toFixed(2)); }
           group.appendChild(p);
           continue;
         }
-        // Letter → glyph outline at exact position.
-        const font = await getOutfitFont(info.w);
+        // Letter → glyph outline at the browser's exact position. Letters keep
+        // their natural shape; the textLength stretch lives in the per-char
+        // positions we read from the browser, so no per-glyph x-scaling needed.
         const glyph = font.charToGlyph(ch);
-        // opentype path: baseline origin, y-up internally but toPathData is y-down SVG.
         const gp = glyph.getPath(pos.x, pos.y, fontSize);
-        // Horizontal stretch: textLength spreads ADVANCE, but getExtentOfChar
-        // gives the real on-screen advance; opentype uses the font's native
-        // advance. Correct by scaling x around the glyph origin.
-        const nativeAdv = glyph.advanceWidth / font.unitsPerEm * fontSize;
-        const realAdv = ext.width;
-        // (letters keep natural shape; positions already come from the browser,
-        //  so per-glyph placement is exact — no per-glyph x-scale needed.)
         const d = gp.toPathData(3);
         if (d) {
           const p = document.createElementNS(SVGNS, "path");
