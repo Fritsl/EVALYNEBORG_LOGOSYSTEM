@@ -1485,10 +1485,13 @@
     if (!name) { els.setupName.focus(); return; }
     const db = loadDB();
     db.setups = db.setups || {};
+    const overwrite = !!(db.setups && db.setups[name]);
     db.setups[name] = structuredClone(state);
     saveDB(db);
-    els.setupName.value = "";
+    // Keep the name in the field so re-saving overwrites the same design.
     refreshSetupList(name);
+    els.saveSetup.textContent = overwrite ? "Saved over ✓" : "Saved ✓";
+    setTimeout(() => { els.saveSetup.textContent = "Save"; }, 1100);
   });
 
   els.loadSetup.addEventListener("click", () => {
@@ -1496,8 +1499,10 @@
     const db = loadDB();
     if (name && db.setups && db.setups[name]) {
       adoptState(db.setups[name]);
+      els.setupName.value = name;   // prefill so "Save" overwrites this design
     } else if (db.last) {
       adoptState(db.last);
+      els.setupName.value = "";
     }
     syncUIFromState();
     rebuildTextRows();
@@ -1570,7 +1575,7 @@
       syncUIFromState();
       rebuildTextRows();
       render();
-      if (name) refreshSetupList(name);
+      if (name) { refreshSetupList(name); els.setupName.value = name; }  // prefill so Save overwrites
       closeGallery();
     });
     return tile;
