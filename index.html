@@ -720,9 +720,13 @@
       const xs = frameOrigD.match(/-?\d*\.?\d+/g).map(Number).filter((_, i) => i % 2 === 0);
       const outerLeft = Math.min(...xs);
       const innerLeft = Math.min(...xs.filter(x => x > outerLeft + 2));
+      const thickness = innerLeft - outerLeft;
       frameMetrics = {
         left: fb.x, width: fb.width, bottom: fb.y + fb.height,
-        thickness: innerLeft - outerLeft,
+        thickness,
+        // Inner edges (text aligns to these, just inside the frame border).
+        innerLeft: fb.x + thickness,
+        innerWidth: fb.width - 2 * thickness,
       };
 
       bgRect = document.createElementNS(SVGNS, "rect");
@@ -888,27 +892,28 @@
     let minX, minY, maxX, maxY;
 
     if (state.mode === "side") {
-      // Text column to the RIGHT of the logo. The whole text+graphics block is
-      // scaled so its total height matches the logo's height exactly.
+      // Text column to the RIGHT of the logo, aligned to the frame's INNER
+      // edges. Scaled so its total height matches the logo's inner height.
       const colLeft  = frameRight + state.textGap;
-      const colWidth = frameMetrics.width * (state.sideWidth || 1);  // 1–4× logo width
-      const regionTop    = barTop;
-      const regionHeight = frameMetrics.bottom - regionTop;
+      const colWidth = frameMetrics.innerWidth * (state.sideWidth || 1);  // 1–4× inner width
+      const innerTop    = barTop + frameMetrics.thickness;
+      const innerBottom = frameMetrics.bottom - frameMetrics.thickness;
+      const regionHeight = innerBottom - innerTop;
 
       // Pass 1: natural (unscaled) height from top 0.
       const naturalH = layoutText(colLeft, colWidth, 0, 1) - 0;
       const scale = (naturalH > 0) ? regionHeight / naturalH : 1;
 
-      // Pass 2: scaled to fill the logo height, aligned to the logo top.
-      layoutText(colLeft, colWidth, regionTop, scale);
+      // Pass 2: scaled to fill the inner height, aligned to the inner top.
+      layoutText(colLeft, colWidth, innerTop, scale);
 
       minX = baseViewBox.x;
       maxX = colLeft + colWidth + SIDE_PAD;
       minY = Math.min(baseViewBox.y, barTop - 15);
       maxY = baseBottom;
     } else {
-      // Text BELOW the logo (default).
-      const textBottom = layoutText(frameMetrics.left, frameMetrics.width,
+      // Text BELOW the logo (default), aligned to the frame's INNER width.
+      const textBottom = layoutText(frameMetrics.innerLeft, frameMetrics.innerWidth,
                                     frameMetrics.bottom + state.textGap);
       minX = baseViewBox.x;
       maxX = baseViewBox.x + baseViewBox.w;
