@@ -471,7 +471,8 @@
           <div class="setup-row">
             <select id="exportFormat">
               <optgroup label="Vector (print · foil/folio cut · web)">
-                <option value="svg">SVG — self-contained</option>
+                <option value="svg-outlined">SVG — outlined (Blender / cutting)</option>
+                <option value="svg">SVG — editable text</option>
               </optgroup>
               <optgroup label="Raster (variable resolution)">
                 <option value="png">PNG</option>
@@ -1391,6 +1392,145 @@
     return '<?xml version="1.0" encoding="UTF-8"?>\n' + clone.outerHTML;
   }
 
+  /* ---- Text → vector outlines (for Blender / cutting / any vector tool that
+         ignores <text>). Converts every glyph to a <path> at the browser's
+         exact rendered position, honoring the textLength stretch + per-run
+         weight, and draws star/dot symbols as geometry. ---- */
+  let _opentypeLoading = null;
+  function loadOpentype() {
+    if (typeof window.opentype !== "undefined") return Promise.resolve(window.opentype);
+    if (_opentypeLoading) return _opentypeLoading;
+    _opentypeLoading = new Promise((res, rej) => {
+      const s = document.createElement("script");
+      s.src = "https://cdn.jsdelivr.net/npm/opentype.js@1.3.4/dist/opentype.min.js";
+      s.onload = () => res(window.opentype);
+      s.onerror = () => rej(new Error("could not load opentype.js"));
+      document.head.appendChild(s);
+    });
+    return _opentypeLoading;
+  }
+
+  // Cache parsed Outfit fonts per weight (fetched as TTF from fontsource CDN).
+  const _fontByWeight = {};
+  async function getOutfitFont(weight) {
+    const w = WEIGHT_STEPS.includes(weight) ? weight : 400;
+    if (_fontByWeight[w]) return _fontByWeight[w];
+    const ot = await loadOpentype();
+    const url = `https://cdn.jsdelivr.net/fontsource/fonts/outfit@latest/latin-${w}-normal.ttf`;
+    const buf = await (await fetch(url)).arrayBuffer();
+    _fontByWeight[w] = ot.parse(buf);
+    return _fontByWeight[w];
+  }
+
+  // Star / dot symbol path data, centred in a unit box, scaled to `s` (cap-ish
+  // height) at baseline-origin (x,yTop). Returns {d, filled}.
+  function symbolPath(ch, x, yTop, s) {
+    const cx = x + s / 2, cy = yTop + s / 2, R = s * 0.5, r = R * 0.42;
+    if (ch === "★" || ch === "☆") {
+      let d = "";
+      for (let k = 0; k < 10; k++) {
+        const ang = -Math.PI / 2 + k * Math.PI / 5;
+        const rad = (k % 2 === 0) ? R : r;
+        const px = cx + Math.cos(ang) * rad, py = cy + Math.sin(ang) * rad;
+        d += (k === 0 ? "M" : "L") + px.toFixed(2) + " " + py.toFixed(2);
+      }
+      d += "Z";
+      return { d, outline: ch === "☆" };
+    }
+    if (ch === "●" || ch === "○") {
+      const rr = R * 0.8;
+      // circle as two arcs
+      const d = `M${(cx-rr).toFixed(2)} ${cy.toFixed(2)}`
+              + `a${rr.toFixed(2)} ${rr.toFixed(2)} 0 1 0 ${(rr*2).toFixed(2)} 0`
+              + `a${rr.toFixed(2)} ${rr.toFixed(2)} 0 1 0 ${(-rr*2).toFixed(2)} 0Z`;
+      return { d, outline: ch === "○" };
+    }
+    return null;
+  }
+
+  // Replace every <text> in `clone` with outlined <path>s, using positions read
+  // from the LIVE svgEl (same DOM order). Returns true on success.
+  async function outlineTextInClone(clone) {
+    const liveTexts = [...svgEl.querySelectorAll("text")];
+    const cloneTexts = [...clone.querySelectorAll("text")];
+    if (!liveTexts.length) return true;
+
+    for (let ti = 0; ti < liveTexts.length; ti++) {
+      const live = liveTexts[ti];
+      const fill = live.getAttribute("fill") || state.fill;
+      const fontSize = parseFloat(live.getAttribute("font-size"));
+      // Map each character index → its run weight (from the live tspans).
+      const charWeights = [];
+      live.querySelectorAll("tspan").forEach(ts => {
+        const w = Number(ts.getAttribute("font-weight")) || state.weight;
+        for (const ch of ts.textContent) charWeights.push({ ch, w });
+      });
+      const n = live.getNumberOfChars();
+      const group = document.createElementNS(SVGNS, "g");
+      group.setAttribute("fill", fill);
+
+      for (let i = 0; i < n; i++) {
+        const info = charWeights[i] || { ch: live.textContent[i], w: state.weight };
+        const ch = info.ch;
+        if (ch === " ") continue;
+        const pos = live.getStartPositionOfChar(i);   // baseline-left, stretched
+        const ext = live.getExtentOfChar(i);          // includes per-char advance
+        const sym = symbolPath(ch, pos.x, pos.y - ext.height, ext.height);
+        if (sym) {
+          const p = document.createElementNS(SVGNS, "path");
+          p.setAttribute("d", sym.d);
+          if (sym.outline) { p.setAttribute("fill", "none"); p.setAttribute("stroke", fill); p.setAttribute("stroke-width", (ext.height*0.08).toFixed(2)); }
+          group.appendChild(p);
+          continue;
+        }
+        // Letter → glyph outline at exact position.
+        const font = await getOutfitFont(info.w);
+        const glyph = font.charToGlyph(ch);
+        // opentype path: baseline origin, y-up internally but toPathData is y-down SVG.
+        const gp = glyph.getPath(pos.x, pos.y, fontSize);
+        // Horizontal stretch: textLength spreads ADVANCE, but getExtentOfChar
+        // gives the real on-screen advance; opentype uses the font's native
+        // advance. Correct by scaling x around the glyph origin.
+        const nativeAdv = glyph.advanceWidth / font.unitsPerEm * fontSize;
+        const realAdv = ext.width;
+        // (letters keep natural shape; positions already come from the browser,
+        //  so per-glyph placement is exact — no per-glyph x-scale needed.)
+        const d = gp.toPathData(3);
+        if (d) {
+          const p = document.createElementNS(SVGNS, "path");
+          p.setAttribute("d", d);
+          group.appendChild(p);
+        }
+      }
+
+      // Align the outlined group to the live text's exact bbox (corrects the
+      // alphabetic-vs-hanging baseline difference between opentype and SVG).
+      svgEl.appendChild(group);                 // measure in the live doc
+      const gb = group.getBBox();
+      const lb = live.getBBox();
+      const dx = lb.x - gb.x;
+      const dy = lb.y - gb.y;
+      svgEl.removeChild(group);
+      if (isFinite(dx) && isFinite(dy)) {
+        group.setAttribute("transform", `translate(${dx.toFixed(2)} ${dy.toFixed(2)})`);
+      }
+
+      cloneTexts[ti].replaceWith(group);
+    }
+    return true;
+  }
+
+  async function buildOutlinedSVG({ transparent }) {
+    const clone = svgEl.cloneNode(true);
+    const vb = svgEl.getAttribute("viewBox").split(/[\s,]+/).map(Number);
+    clone.setAttribute("xmlns", SVGNS);
+    clone.setAttribute("width", vb[2]);
+    clone.setAttribute("height", vb[3]);
+    if (transparent) { const bg = clone.querySelector("rect"); if (bg) bg.remove(); }
+    await outlineTextInClone(clone);
+    return '<?xml version="1.0" encoding="UTF-8"?>\n' + clone.outerHTML;
+  }
+
   function downloadBlob(blob, filename) {
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -1427,11 +1567,10 @@
 
   function syncExportUI() {
     const fmt = els.exportFormat.value;
-    const isVector = fmt === "svg";
-    const isJpg = fmt === "jpg";
+    const isVector = fmt === "svg" || fmt === "svg-outlined";
     els.exportWidthControl.style.display   = isVector ? "none" : "";
     els.exportQualityControl.style.display = (fmt === "jpg" || fmt === "webp") ? "" : "none";
-    els.exportTransparentRow.style.display = (fmt === "svg" || fmt === "png" || fmt === "webp") ? "" : "none";
+    els.exportTransparentRow.style.display = (isVector || fmt === "png" || fmt === "webp") ? "" : "none";
     if (isVector) {
       const { vbW, vbH } = exportDims();
       els.exportSizeInfo.textContent = `${Math.round(vbW)}×${Math.round(vbH)} units`;
@@ -1449,10 +1588,17 @@
     note.textContent = "Preparing… (embedding font)";
     try {
       const transparent = els.exportTransparent.checked && fmt !== "jpg";
+      if (fmt === "svg-outlined") {
+        note.textContent = "Preparing… (converting text to outlines)";
+        const svgStr = await buildOutlinedSVG({ transparent });
+        downloadBlob(new Blob([svgStr], { type: "image/svg+xml" }), "eva-lyneborg-logo-outlined.svg");
+        note.className = "export-note"; note.textContent = "Saved outlined SVG (text → paths; opens in Blender/cutters).";
+        return;
+      }
       const svgStr = await buildExportSVG({ transparent, embedFont: true });
       if (fmt === "svg") {
         downloadBlob(new Blob([svgStr], { type: "image/svg+xml" }), "eva-lyneborg-logo.svg");
-        note.className = "export-note"; note.textContent = "Saved SVG (vector, self-contained).";
+        note.className = "export-note"; note.textContent = "Saved SVG (vector, editable text + embedded font).";
       } else {
         const { w, h } = exportDims();
         const q = Number(els.exportQuality.value) / 100;
