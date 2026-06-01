@@ -1493,8 +1493,27 @@
         for (const ch of ts.textContent) charWeights.push({ ch, w });
       });
       const n = live.getNumberOfChars();
+      const baseWeight = Number((live.querySelector("tspan") || {}).getAttribute
+        ? live.querySelector("tspan").getAttribute("font-weight") : state.weight) || state.weight;
       const group = document.createElementNS(SVGNS, "g");
       group.setAttribute("fill", fill);
+
+      // ---- ONE consistent baseline shift for the whole line ----
+      // The live <text> uses dominant-baseline="hanging", so the browser's
+      // reported char position is NOT the alphabetic baseline opentype draws
+      // on. Compute the shift once (from a reference char's live cap-top vs the
+      // opentype cap-top) and apply it to every glyph — so all lines align
+      // identically (the old per-line bbox correction drifted line to line).
+      let refIdx = 0;
+      while (refIdx < n && (live.textContent[refIdx] === " ")) refIdx++;
+      let lineDy = 0;
+      if (refIdx < n) {
+        const rp = live.getStartPositionOfChar(refIdx);
+        const re = live.getExtentOfChar(refIdx);
+        const refFont = await getOutfitFont(baseWeight);
+        const otCapTop = refFont.charToGlyph("H").getPath(0, rp.y, fontSize).getBoundingBox().y1;
+        lineDy = re.y - otCapTop;                  // live cap-top − opentype cap-top
+      }
 
       for (let i = 0; i < n; i++) {
         const info = charWeights[i] || { ch: live.textContent[i], w: state.weight };
@@ -1503,49 +1522,32 @@
         const pos = live.getStartPositionOfChar(i);   // baseline-left, stretched
         const ext = live.getExtentOfChar(i);          // includes per-char advance
         const font = await getOutfitFont(info.w);
+        const baseY = pos.y + lineDy;                 // shared, shifted baseline
 
         if (SYMBOLS.includes(ch)) {
-          // Match the symbol to the OUTLINED CAP band so it lines up with the
-          // real letter paths in the SVG: measure the actual "H" glyph outline
-          // (this weight, this size) for the true ink top/bottom around the
-          // baseline, center the symbol on that band, and size it to the cap.
-          const capRef = font.charToGlyph("H").getPath(0, pos.y, fontSize).getBoundingBox();
-          const capTop = capRef.y1, capBot = capRef.y2;       // SVG y-down
+          // Center the symbol on the (shifted) cap band, measured from "H".
+          const capRef = font.charToGlyph("H").getPath(0, baseY, fontSize).getBoundingBox();
+          const capTop = capRef.y1, capBot = capRef.y2;
           const capH = capBot - capTop;
           const cx = pos.x + ext.width / 2;
           const cy = (capTop + capBot) / 2;
-          const R = capH * 0.5 * 0.97;                         // ~cap height, matches PNG
+          const R = capH * 0.5 * 0.97;
           const sym = symbolPath(ch, cx, cy, R);
           const p = document.createElementNS(SVGNS, "path");
           p.setAttribute("d", sym.d);
           if (sym.outline) { p.setAttribute("fill", "none"); p.setAttribute("stroke", fill); p.setAttribute("stroke-width", (R*0.16).toFixed(2)); }
-          p.dataset.sym = "1";                                 // mark: exclude from bbox-align
           group.appendChild(p);
           continue;
         }
-        // Letter → glyph outline at the browser's exact position. Letters keep
-        // their natural shape; the textLength stretch lives in the per-char
-        // positions we read from the browser, so no per-glyph x-scaling needed.
+        // Letter → glyph outline at the exact x position, on the shared baseline.
         const glyph = font.charToGlyph(ch);
-        const gp = glyph.getPath(pos.x, pos.y, fontSize);
+        const gp = glyph.getPath(pos.x, baseY, fontSize);
         const d = gp.toPathData(3);
         if (d) {
           const p = document.createElementNS(SVGNS, "path");
           p.setAttribute("d", d);
           group.appendChild(p);
         }
-      }
-
-      // Align the outlined group to the live text's exact bbox (corrects the
-      // alphabetic-vs-hanging baseline difference between opentype and SVG).
-      svgEl.appendChild(group);                 // measure in the live doc
-      const gb = group.getBBox();
-      const lb = live.getBBox();
-      const dx = lb.x - gb.x;
-      const dy = lb.y - gb.y;
-      svgEl.removeChild(group);
-      if (isFinite(dx) && isFinite(dy)) {
-        group.setAttribute("transform", `translate(${dx.toFixed(2)} ${dy.toFixed(2)})`);
       }
 
       cloneTexts[ti].replaceWith(group);
