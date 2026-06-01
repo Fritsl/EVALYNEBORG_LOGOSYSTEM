@@ -458,6 +458,10 @@
         <input type="checkbox" id="freeSize" />
         <label for="freeSize">Free size (step 1, otherwise 10)</label>
       </div>
+      <div class="checkbox-row">
+        <input type="checkbox" id="alignOuter" />
+        <label for="alignOuter">Align to frame outer edge (off = inner)</label>
+      </div>
     </div>
 
     <div class="pane" id="exportPane">
@@ -548,6 +552,7 @@
     sideWidth: 1,           // side mode: text column width as a multiple of logo width (1–4)
     outerMargin: 0,         // extra background frame around the whole composition
     freeSize: false,
+    alignOuter: false,      // text block aligns to frame inner (false) or outer (true) edges
     generalCollapsed: false,// UI: is the "General settings" pane folded?
     // Each item is either:
     //   { type:"text", text, size, weight }              a text line
@@ -556,7 +561,7 @@
     textLines: [ { type: "text", text: "EVA LYNEBORG", size: 70, weight: 500 } ],
   };
   // Settings restored by "Reset" (everything visual except the text content).
-  const RESET_KEYS = ["fill", "bg", "heightRegulator", "weight", "lineSpacing", "textGap", "outerMargin", "sideWidth"];
+  const RESET_KEYS = ["fill", "bg", "heightRegulator", "weight", "lineSpacing", "textGap", "outerMargin", "sideWidth", "alignOuter"];
 
   let state = structuredClone(DEFAULTS);
 
@@ -593,6 +598,7 @@
     generalPane:     document.getElementById("generalPane"),
     generalPaneHead: document.getElementById("generalPaneHead"),
     freeSize: document.getElementById("freeSize"),
+    alignOuter: document.getElementById("alignOuter"),
     textLines: document.getElementById("textLines"),
     addLine:  document.getElementById("addLine"),
     addRule:  document.getElementById("addRule"),
@@ -891,29 +897,34 @@
 
     let minX, minY, maxX, maxY;
 
+    // Align the text block to the frame's inner or outer edges (toggle).
+    const inset = state.alignOuter ? 0 : frameMetrics.thickness;
+    const blockLeft   = frameMetrics.left + inset;
+    const blockWidth  = frameMetrics.width - 2 * inset;
+
     if (state.mode === "side") {
-      // Text column to the RIGHT of the logo, aligned to the frame's INNER
-      // edges. Scaled so its total height matches the logo's inner height.
+      // Text column to the RIGHT of the logo. Scaled so its total height
+      // matches the logo's (inner or outer) height.
       const colLeft  = frameRight + state.textGap;
-      const colWidth = frameMetrics.innerWidth * (state.sideWidth || 1);  // 1–4× inner width
-      const innerTop    = barTop + frameMetrics.thickness;
-      const innerBottom = frameMetrics.bottom - frameMetrics.thickness;
-      const regionHeight = innerBottom - innerTop;
+      const colWidth = blockWidth * (state.sideWidth || 1);  // 1–4× block width
+      const regionTop    = barTop + inset;
+      const regionBottom = frameMetrics.bottom - inset;
+      const regionHeight = regionBottom - regionTop;
 
       // Pass 1: natural (unscaled) height from top 0.
       const naturalH = layoutText(colLeft, colWidth, 0, 1) - 0;
       const scale = (naturalH > 0) ? regionHeight / naturalH : 1;
 
-      // Pass 2: scaled to fill the inner height, aligned to the inner top.
-      layoutText(colLeft, colWidth, innerTop, scale);
+      // Pass 2: scaled to fill the height, aligned to the region top.
+      layoutText(colLeft, colWidth, regionTop, scale);
 
       minX = baseViewBox.x;
       maxX = colLeft + colWidth + SIDE_PAD;
       minY = Math.min(baseViewBox.y, barTop - 15);
       maxY = baseBottom;
     } else {
-      // Text BELOW the logo (default), aligned to the frame's INNER width.
-      const textBottom = layoutText(frameMetrics.innerLeft, frameMetrics.innerWidth,
+      // Text BELOW the logo (default).
+      const textBottom = layoutText(blockLeft, blockWidth,
                                     frameMetrics.bottom + state.textGap);
       minX = baseViewBox.x;
       maxX = baseViewBox.x + baseViewBox.w;
@@ -1039,6 +1050,7 @@
     els.outerMargin.value = state.outerMargin;
     els.outerMarginVal.textContent = state.outerMargin;
     els.freeSize.checked = !!state.freeSize;
+    els.alignOuter.checked = !!state.alignOuter;
     els.generalPane.classList.toggle("collapsed", !!state.generalCollapsed);
   }
 
@@ -1284,6 +1296,11 @@
   els.lineSpacing.addEventListener("input", e => {
     state.lineSpacing = Number(e.target.value);
     els.lineSpacingVal.textContent = state.lineSpacing;
+    render();
+  });
+
+  els.alignOuter.addEventListener("change", e => {
+    state.alignOuter = e.target.checked;
     render();
   });
 
