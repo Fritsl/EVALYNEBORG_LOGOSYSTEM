@@ -212,6 +212,12 @@
     font-size: 13px; padding: 8px 10px;
   }
   .setup-row button { white-space: nowrap; }
+  .filebtnlike {
+    background: #262626; color: var(--panel-fg); border: 1px solid var(--panel-border);
+    border-radius: 8px; padding: 10px; font-size: 13px; cursor: pointer;
+    text-align: center; white-space: nowrap;
+  }
+  .filebtnlike:hover { background: #303030; border-color: #444; }
 
   /* ---- Collapsible pane (general settings) ---- */
   .pane {
@@ -365,6 +371,10 @@
         <button id="saveSetup">Save</button>
       </div>
       <button class="add-line" id="openGallery" style="margin-top:4px">⊞ Compare all (gallery)</button>
+      <div class="setup-row" style="margin-top:8px">
+        <button id="exportDesign" style="flex:1">⬇ Save design to file</button>
+        <label class="filebtnlike" id="importDesignBtn" style="flex:1">⬆ Load design file<input type="file" id="importDesign" accept=".json,application/json" hidden></label>
+      </div>
     </div>
 
     <div class="pane" id="generalPane">
@@ -629,6 +639,8 @@
     saveSetup:   document.getElementById("saveSetup"),
     loadSetup:   document.getElementById("loadSetup"),
     deleteSetup: document.getElementById("deleteSetup"),
+    exportDesign: document.getElementById("exportDesign"),
+    importDesign: document.getElementById("importDesign"),
   };
 
   let svgEl = null, framePath = null, frameOrigD = "";
@@ -1687,6 +1699,41 @@
       saveDB(db);
       refreshSetupList();
     }
+  });
+
+  // ---- Save / load a design as a .json FILE (portable across browsers, and
+  // shareable). localStorage is per-browser, so files are how a design moves. -
+  els.exportDesign.addEventListener("click", () => {
+    const name = (els.setupName.value.trim() || els.setupSelect.value || "design");
+    const payload = { app: "evalyneborg-logostudio", version: 1, name, state: structuredClone(state) };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+    const fname = "evalyneborg-" + name.replace(/[^\w\-]+/g, "_").toLowerCase() + ".json";
+    downloadBlob(blob, fname);
+  });
+
+  els.importDesign.addEventListener("change", e => {
+    const f = e.target.files && e.target.files[0];
+    if (!f) return;
+    const rd = new FileReader();
+    rd.onload = () => {
+      try {
+        const obj = JSON.parse(rd.result);
+        const st = obj && obj.state ? obj.state : obj;   // accept raw state too
+        if (!st || !Array.isArray(st.textLines)) throw new Error("not a design file");
+        adoptState(st);
+        const nm = (obj && obj.name) || "";
+        if (nm) els.setupName.value = nm;
+        syncUIFromState();
+        rebuildTextRows();
+        render();
+        // also store it into this browser's setups so it shows in the gallery
+        if (nm) { const db = loadDB(); db.setups = db.setups || {}; db.setups[nm] = structuredClone(state); saveDB(db); refreshSetupList(nm); }
+      } catch (err) {
+        alert("Could not load design file: " + err.message);
+      }
+    };
+    rd.readAsText(f);
+    e.target.value = "";   // allow re-loading the same file
   });
 
   /* =========================================================================
