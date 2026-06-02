@@ -965,7 +965,18 @@
     const blockLeft   = frameMetrics.left + inset;
     const blockWidth  = frameMetrics.width - 2 * inset;
 
-    if (state.mode === "side") {
+    // Is there anything to draw besides the logo? (a line, or a non-empty text)
+    const hasContent = state.textLines.some(l =>
+      l.type === "line" || (l.type === "text" && (l.text || "").trim().length));
+
+    if (!hasContent) {
+      // Just the framed logo — crop tightly to it (no text column / no gap).
+      while (textGroup.firstChild) textGroup.removeChild(textGroup.firstChild);
+      minX = baseViewBox.x;
+      maxX = baseViewBox.x + baseViewBox.w;
+      minY = Math.min(baseViewBox.y, barTop - 15);
+      maxY = baseBottom;
+    } else if (state.mode === "side") {
       // Text column to the RIGHT of the logo. Scaled so its total height
       // matches the logo's (inner or outer) height.
       const colLeft  = frameRight + state.textGap;
