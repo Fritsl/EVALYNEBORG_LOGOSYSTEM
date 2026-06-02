@@ -472,6 +472,10 @@
           <input type="checkbox" id="alignOuter" />
           <label for="alignOuter">Align to frame outer edge (off = inner)</label>
         </div>
+        <div class="checkbox-row">
+          <input type="checkbox" id="fatFrame" />
+          <label for="fatFrame">Fat frame (double the border)</label>
+        </div>
       </div>
     </div>
 
@@ -579,6 +583,7 @@
     outerMargin: 0,         // extra background frame around the whole composition
     freeSize: false,
     alignOuter: false,      // text block aligns to frame inner (false) or outer (true) edges
+    fatFrame: false,        // double the outer frame border thickness
     generalCollapsed: false,// UI: is the "General settings" pane folded?
     // Each item is either:
     //   { type:"text", text, size, weight }              a text line
@@ -587,7 +592,7 @@
     textLines: [ { type: "text", text: "EVA LYNEBORG", size: 70, weight: 500 } ],
   };
   // Settings restored by "Reset" (everything visual except the text content).
-  const RESET_KEYS = ["fill", "bg", "heightRegulator", "weight", "lineSpacing", "textGap", "outerMargin", "sideWidth", "alignOuter"];
+  const RESET_KEYS = ["fill", "bg", "heightRegulator", "weight", "lineSpacing", "textGap", "outerMargin", "sideWidth", "alignOuter", "fatFrame"];
 
   let state = structuredClone(DEFAULTS);
 
@@ -625,6 +630,7 @@
     generalPaneHead: document.getElementById("generalPaneHead"),
     freeSize: document.getElementById("freeSize"),
     alignOuter: document.getElementById("alignOuter"),
+    fatFrame: document.getElementById("fatFrame"),
     textLines: document.getElementById("textLines"),
     addLine:  document.getElementById("addLine"),
     addRule:  document.getElementById("addRule"),
@@ -761,6 +767,34 @@
       if (isY) {
         const v = parseFloat(m);
         if (v < TOP_THRESHOLD) return (v + dy).toString();
+      }
+      return m;
+    });
+  }
+
+  // "Fat frame": double the outer border thickness. The frame is two
+  // axis-aligned rectangles (outer + inner, even-odd fill). Every point on the
+  // OUTER rectangle sits at the path's extreme min/max X or Y; push just those
+  // outward by `t` (the frame thickness), leaving the inner rectangle fixed —
+  // i.e. extend each outer corner outward along its own diagonal. Returns the
+  // new path string AND the extra reach so the viewBox can grow to fit.
+  function fattenFrame(d, t) {
+    const nums = d.match(/-?\d*\.?\d+/g).map(Number);
+    const xs = nums.filter((_, i) => i % 2 === 0);
+    const ys = nums.filter((_, i) => i % 2 === 1);
+    const minX = Math.min(...xs), maxX = Math.max(...xs);
+    const minY = Math.min(...ys), maxY = Math.max(...ys);
+    const eps = 1.5;
+    let i = 0;
+    return d.replace(/-?\d*\.?\d+/g, (m) => {
+      const v = parseFloat(m);
+      const isY = (i++ % 2) === 1;
+      if (!isY) {
+        if (Math.abs(v - minX) < eps) return (v - t).toString();   // outer-left  → further left
+        if (Math.abs(v - maxX) < eps) return (v + t).toString();   // outer-right → further right
+      } else {
+        if (Math.abs(v - minY) < eps) return (v - t).toString();   // outer-top    → up
+        if (Math.abs(v - maxY) < eps) return (v + t).toString();   // outer-bottom → down
       }
       return m;
     });
@@ -951,7 +985,9 @@
     });
 
     if (framePath) {
-      framePath.setAttribute("d", shiftFrameTop(frameOrigD, state.heightRegulator));
+      let d = shiftFrameTop(frameOrigD, state.heightRegulator);
+      if (state.fatFrame) d = fattenFrame(d, frameMetrics.thickness);
+      framePath.setAttribute("d", d);
     }
 
     const barTop      = 11 + state.heightRegulator;     // outer top edge of frame
@@ -1004,6 +1040,13 @@
       maxX = baseViewBox.x + baseViewBox.w;
       minY = Math.min(baseViewBox.y, barTop - 15);
       maxY = Math.max(baseBottom, textBottom + BOTTOM_PAD);
+    }
+
+    // Fat frame extends the outer border outward by the frame thickness on
+    // every side — grow the bounds so it isn't clipped.
+    if (state.fatFrame) {
+      const t = frameMetrics.thickness;
+      minX -= t; maxX += t; minY -= t; maxY += t;
     }
 
     // Outer frame: uniform background margin around the whole composition.
@@ -1126,6 +1169,7 @@
     els.outerMarginVal.textContent = state.outerMargin;
     els.freeSize.checked = !!state.freeSize;
     els.alignOuter.checked = !!state.alignOuter;
+    els.fatFrame.checked = !!state.fatFrame;
     els.generalPane.classList.toggle("collapsed", !!state.generalCollapsed);
   }
 
@@ -1376,6 +1420,11 @@
 
   els.alignOuter.addEventListener("change", e => {
     state.alignOuter = e.target.checked;
+    render();
+  });
+
+  els.fatFrame.addEventListener("change", e => {
+    state.fatFrame = e.target.checked;
     render();
   });
 
