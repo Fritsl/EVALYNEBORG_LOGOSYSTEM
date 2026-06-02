@@ -844,7 +844,6 @@
       t.setAttribute("font-family", "Outfit, Arial, sans-serif");
       t.setAttribute("font-weight", baseWeight);
       t.setAttribute("font-size", size);
-      t.setAttribute("dominant-baseline", "hanging");
       t.setAttribute("fill", state.fill);
       // One <tspan> per run so per-run weight shifts work while textLength on
       // the parent still stretches the whole line to the column width.
@@ -1498,23 +1497,10 @@
       const group = document.createElementNS(SVGNS, "g");
       group.setAttribute("fill", fill);
 
-      // ---- ONE consistent baseline shift for the whole line ----
-      // The live <text> uses dominant-baseline="hanging", so the browser's
-      // reported char position is NOT the alphabetic baseline opentype draws
-      // on. Compute the shift once (from a reference char's live cap-top vs the
-      // opentype cap-top) and apply it to every glyph — so all lines align
-      // identically (the old per-line bbox correction drifted line to line).
-      let refIdx = 0;
-      while (refIdx < n && (live.textContent[refIdx] === " ")) refIdx++;
-      let lineDy = 0;
-      if (refIdx < n) {
-        const rp = live.getStartPositionOfChar(refIdx);
-        const re = live.getExtentOfChar(refIdx);
-        const refFont = await getOutfitFont(baseWeight);
-        const otCapTop = refFont.charToGlyph("H").getPath(0, rp.y, fontSize).getBoundingBox().y1;
-        lineDy = re.y - otCapTop;                  // live cap-top − opentype cap-top
-      }
-
+      // The live <text> now uses the normal ALPHABETIC baseline (no
+      // dominant-baseline), so getStartPositionOfChar(i).y IS exactly the
+      // baseline opentype draws on — and it rasterizes identically. Draw each
+      // glyph at that y with no correction.
       for (let i = 0; i < n; i++) {
         const info = charWeights[i] || { ch: live.textContent[i], w: state.weight };
         const ch = info.ch;
@@ -1522,10 +1508,10 @@
         const pos = live.getStartPositionOfChar(i);   // baseline-left, stretched
         const ext = live.getExtentOfChar(i);          // includes per-char advance
         const font = await getOutfitFont(info.w);
-        const baseY = pos.y + lineDy;                 // shared, shifted baseline
+        const baseY = pos.y;                           // true alphabetic baseline
 
         if (SYMBOLS.includes(ch)) {
-          // Center the symbol on the (shifted) cap band, measured from "H".
+          // Center the symbol on the cap band, measured from "H".
           const capRef = font.charToGlyph("H").getPath(0, baseY, fontSize).getBoundingBox();
           const capTop = capRef.y1, capBot = capRef.y2;
           const capH = capBot - capTop;
