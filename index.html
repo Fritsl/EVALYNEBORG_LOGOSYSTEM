@@ -218,6 +218,12 @@
     text-align: center; white-space: nowrap;
   }
   .filebtnlike:hover { background: #303030; border-color: #444; }
+  .file-status {
+    font-size: 13px; color: var(--panel-fg); margin-bottom: 8px;
+    font-family: ui-monospace, "Cascadia Code", monospace;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .file-status.dirty { color: var(--accent); }
 
   /* ---- Collapsible pane (general settings) ---- */
   .pane {
@@ -360,7 +366,19 @@
     <p class="sub">Eva Lyneborg</p>
 
     <div class="control">
-      <span class="section-label">Saved setups</span>
+      <span class="section-label">File</span>
+      <div class="file-status" id="fileStatus">Untitled</div>
+      <div class="setup-row">
+        <button id="fileNew"    class="add-line" style="flex:1;margin-top:0">New</button>
+        <button id="fileOpen"   class="add-line" style="flex:1;margin-top:0">Open…</button>
+        <button id="fileSave"   class="add-line" style="flex:1;margin-top:0">Save</button>
+        <button id="fileSaveAs" class="add-line" style="flex:1;margin-top:0">Save As…</button>
+      </div>
+      <input type="file" id="importDesign" accept=".json,application/json" hidden>
+    </div>
+
+    <div class="control">
+      <span class="section-label">Saved setups (this browser)</span>
       <div class="setup-row">
         <select id="setupSelect"><option value="">— last session —</option></select>
         <button id="loadSetup">Load</button>
@@ -371,10 +389,6 @@
         <button id="saveSetup">Save</button>
       </div>
       <button class="add-line" id="openGallery" style="margin-top:4px">⊞ Compare all (gallery)</button>
-      <div class="setup-row" style="margin-top:8px">
-        <button id="exportDesign" style="flex:1">⬇ Save design to file</button>
-        <label class="filebtnlike" id="importDesignBtn" style="flex:1">⬆ Load design file<input type="file" id="importDesign" accept=".json,application/json" hidden></label>
-      </div>
     </div>
 
     <div class="pane" id="generalPane">
@@ -640,12 +654,44 @@
     saveSetup:   document.getElementById("saveSetup"),
     loadSetup:   document.getElementById("loadSetup"),
     deleteSetup: document.getElementById("deleteSetup"),
-    exportDesign: document.getElementById("exportDesign"),
     importDesign: document.getElementById("importDesign"),
+    fileStatus:  document.getElementById("fileStatus"),
+    fileNew:     document.getElementById("fileNew"),
+    fileOpen:    document.getElementById("fileOpen"),
+    fileSave:    document.getElementById("fileSave"),
+    fileSaveAs:  document.getElementById("fileSaveAs"),
   };
 
   let svgEl = null, framePath = null, frameOrigD = "";
   let baseViewBox = null, bgRect = null, textGroup = null, frameMetrics = null;
+
+  /* =========================================================================
+     DOCUMENT / FILE MODEL  (New / Open / Save / Save As, dirty tracking)
+     ========================================================================= */
+  let currentFileName = null;      // e.g. "storefront.json" or null = Untitled
+  let currentFileHandle = null;    // FileSystemFileHandle when FS Access API used
+  let isDirty = false;
+  let applyingState = false;       // true while adopting a loaded/new state (suppresses dirty)
+  const HAS_FS = ("showSaveFilePicker" in window);
+
+  function updateFileStatus() {
+    if (!els.fileStatus) return;
+    els.fileStatus.textContent = (isDirty ? "● " : "") + (currentFileName || "Untitled");
+    els.fileStatus.classList.toggle("dirty", isDirty);
+  }
+  function markDirty()  { if (applyingState) return; isDirty = true;  updateFileStatus(); }
+  function clearDirty() { isDirty = false; updateFileStatus(); }
+  // Render without marking dirty (for programmatic re-renders like fonts.ready).
+  function renderClean() { const w = applyingState; applyingState = true; try { render(); } finally { applyingState = w; } }
+  // Adopt a full state object as the working document, without dirtying.
+  function applyState(st) {
+    applyingState = true;
+    adoptState(st);
+    syncUIFromState();
+    rebuildTextRows();
+    render();
+    applyingState = false;
+  }
 
   /* =========================================================================
      LOCAL STORAGE  (last session + named setups)
@@ -755,16 +801,19 @@
       textGroup = document.createElementNS(SVGNS, "g");
       svgEl.appendChild(textGroup);
 
-      // Restore last session if present.
+      // Restore last session if present — as a CLEAN starting document.
+      applyingState = true;
       const db = loadDB();
       if (db.last) adoptState(db.last);
       refreshSetupList();
       syncUIFromState();
       rebuildTextRows();
       render();
+      applyingState = false;
+      clearDirty();
 
       if (document.fonts && document.fonts.ready) {
-        document.fonts.ready.then(render);
+        document.fonts.ready.then(renderClean);
       }
     })
     .catch(err => {
@@ -964,6 +1013,7 @@
       syncProjection();
       if (els.exportSizeInfo) syncExportUI();
       persistLast();
+      if (!applyingState) markDirty();   // any user-driven render = unsaved change
     }
   }
   // When true, render() skips persistence / popout / export side-effects, so we
@@ -1681,15 +1731,15 @@
     const name = els.setupSelect.value;
     const db = loadDB();
     if (name && db.setups && db.setups[name]) {
-      adoptState(db.setups[name]);
-      els.setupName.value = name;   // prefill so "Save" overwrites this design
+      applyState(db.setups[name]);
+      els.setupName.value = name;   // prefill so "Save" (setup) overwrites this setup
     } else if (db.last) {
-      adoptState(db.last);
+      applyState(db.last);
       els.setupName.value = "";
     }
-    syncUIFromState();
-    rebuildTextRows();
-    render();
+    // A setup is not a file — it loads as a fresh, clean Untitled document.
+    currentFileName = null; currentFileHandle = null;
+    clearDirty();
   });
 
   els.deleteSetup.addEventListener("click", () => {
@@ -1703,39 +1753,125 @@
     }
   });
 
-  // ---- Save / load a design as a .json FILE (portable across browsers, and
-  // shareable). localStorage is per-browser, so files are how a design moves. -
-  els.exportDesign.addEventListener("click", () => {
-    const name = (els.setupName.value.trim() || els.setupSelect.value || "design");
-    const payload = { app: "evalyneborg-logostudio", version: 1, name, state: structuredClone(state) };
-    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
-    const fname = "evalyneborg-" + name.replace(/[^\w\-]+/g, "_").toLowerCase() + ".json";
-    downloadBlob(blob, fname);
-  });
+  /* =========================================================================
+     FILE: New / Open / Save / Save As — with remembered filename, save-over,
+     and unsaved-changes (dirty) warnings. Uses the File System Access API when
+     available (Chrome/Edge), else falls back to download + hidden file input.
+     Design files keep the shape { app, version, name, state } and the parser
+     also accepts a raw state object (back-compat with older exports).
+     ========================================================================= */
+  const FILE_TYPES = [{ description: "Logo design", accept: { "application/json": [".json"] } }];
 
+  function parseDesignFile(text) {
+    const obj = JSON.parse(text);
+    const st = (obj && obj.state) ? obj.state : obj;     // {…,state} OR raw state
+    if (!st || !Array.isArray(st.textLines)) throw new Error("not a design file");
+    return { state: st, name: (obj && obj.name) || "" };
+  }
+  function buildPayload() {
+    const base = currentFileName ? currentFileName.replace(/\.json$/i, "") : "design";
+    return { app: "evalyneborg-logostudio", version: 1, name: base, state: structuredClone(state) };
+  }
+  function suggestedFileName() {
+    if (currentFileName) return currentFileName;
+    return "evalyneborg-design.json";
+  }
+  function confirmDiscardIfDirty() {
+    return !isDirty || confirm("You have unsaved changes. Discard them?");
+  }
+
+  async function fileNew() {
+    if (!confirmDiscardIfDirty()) return;
+    applyState(structuredClone(DEFAULTS));
+    currentFileName = null; currentFileHandle = null;
+    els.setupName.value = "";
+    clearDirty();
+  }
+
+  async function fileOpen() {
+    if (!confirmDiscardIfDirty()) return;
+    if (HAS_FS) {
+      try {
+        const [h] = await window.showOpenFilePicker({ types: FILE_TYPES, multiple: false });
+        const f = await h.getFile();
+        const { state: st, name } = parseDesignFile(await f.text());
+        applyState(st);
+        currentFileHandle = h; currentFileName = f.name;
+        if (name) els.setupName.value = name;
+        clearDirty();
+      } catch (err) {
+        if (err && err.name !== "AbortError") alert("Could not open file: " + err.message);
+      }
+    } else {
+      els.importDesign.click();   // fallback → hidden <input type=file>
+    }
+  }
+
+  async function fileSave() {
+    if (HAS_FS && currentFileHandle) {
+      try {
+        const w = await currentFileHandle.createWritable();
+        await w.write(JSON.stringify(buildPayload(), null, 2));
+        await w.close();
+        clearDirty();
+      } catch (err) {
+        if (err && err.name !== "AbortError") alert("Save failed: " + err.message);
+      }
+    } else {
+      return fileSaveAs();
+    }
+  }
+
+  async function fileSaveAs() {
+    const json = JSON.stringify(buildPayload(), null, 2);
+    if (HAS_FS) {
+      try {
+        const h = await window.showSaveFilePicker({ suggestedName: suggestedFileName(), types: FILE_TYPES });
+        const w = await h.createWritable();
+        await w.write(json);
+        await w.close();
+        currentFileHandle = h; currentFileName = h.name;
+        clearDirty();
+      } catch (err) {
+        if (err && err.name !== "AbortError") alert("Save failed: " + err.message);
+      }
+    } else {
+      const fname = suggestedFileName();
+      downloadBlob(new Blob([json], { type: "application/json" }), fname);
+      currentFileName = fname; currentFileHandle = null;
+      clearDirty();
+    }
+  }
+
+  els.fileNew.addEventListener("click", fileNew);
+  els.fileOpen.addEventListener("click", fileOpen);
+  els.fileSave.addEventListener("click", fileSave);
+  els.fileSaveAs.addEventListener("click", fileSaveAs);
+
+  // Fallback Open path (used when the File System Access API is unavailable).
   els.importDesign.addEventListener("change", e => {
     const f = e.target.files && e.target.files[0];
     if (!f) return;
     const rd = new FileReader();
     rd.onload = () => {
       try {
-        const obj = JSON.parse(rd.result);
-        const st = obj && obj.state ? obj.state : obj;   // accept raw state too
-        if (!st || !Array.isArray(st.textLines)) throw new Error("not a design file");
-        adoptState(st);
-        const nm = (obj && obj.name) || "";
-        if (nm) els.setupName.value = nm;
-        syncUIFromState();
-        rebuildTextRows();
-        render();
-        // also store it into this browser's setups so it shows in the gallery
-        if (nm) { const db = loadDB(); db.setups = db.setups || {}; db.setups[nm] = structuredClone(state); saveDB(db); refreshSetupList(nm); }
+        const { state: st, name } = parseDesignFile(rd.result);
+        applyState(st);
+        currentFileName = f.name; currentFileHandle = null;
+        if (name) els.setupName.value = name;
+        clearDirty();
       } catch (err) {
         alert("Could not load design file: " + err.message);
       }
     };
     rd.readAsText(f);
     e.target.value = "";   // allow re-loading the same file
+  });
+
+  // Warn before leaving with unsaved changes (separate from the popout/projection
+  // beforeunload listeners — all three coexist).
+  window.addEventListener("beforeunload", e => {
+    if (isDirty) { e.preventDefault(); e.returnValue = ""; }
   });
 
   /* =========================================================================
@@ -1789,11 +1925,11 @@
 
     tile.append(art, cap);
     tile.addEventListener("click", () => {
-      adoptState(stateObj);
-      syncUIFromState();
-      rebuildTextRows();
-      render();
-      if (name) { refreshSetupList(name); els.setupName.value = name; }  // prefill so Save overwrites
+      applyState(stateObj);
+      if (name) { refreshSetupList(name); els.setupName.value = name; }  // prefill the setup name
+      // A gallery item is a setup, not a file → loads as a clean Untitled doc.
+      currentFileName = null; currentFileHandle = null;
+      clearDirty();
       closeGallery();
     });
     return tile;
